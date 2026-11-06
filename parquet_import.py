@@ -1,5 +1,5 @@
 """Admin-only staged Parquet uploads; decode selected columns in bounded batches."""
-import itertools,json,re,secrets,tempfile,time
+import itertools,json,re,secrets,tempfile,time,hashlib
 from pathlib import Path
 
 MAX_FILE_BYTES=256*1024*1024
@@ -15,8 +15,9 @@ class ParquetUploads:
  def __init__(self):self.jobs={}
  def cleanup(self):
   for key,job in list(self.jobs.items()):
-   if time.time()-job['touched']>TTL_SECONDS:self.remove(key)
+   if not job.get('import_running') and time.time()-job['touched']>TTL_SECONDS:self.remove(key)
  def remove(self,key):
+  if self.jobs.get(key,{}).get('import_running'):raise UploadConflict('File đang nhập. Tạm dừng trước khi thay hoặc đóng file.')
   job=self.jobs.pop(key,None)
   if job:
    iterator=job.get('iterator')
@@ -35,7 +36,7 @@ class ParquetUploads:
    if job['user_id']==user_id:self.remove(key)
   if len(self.jobs)>=2:raise ValueError('Đang có hai file Parquet được xử lý. Thử lại sau.')
   tmp=tempfile.TemporaryDirectory(prefix='studio-parquet-');key=secrets.token_hex(16)
-  self.jobs[key]={'temp':tmp,'path':Path(tmp.name)/'upload.parquet','name':name,'size':size,'written':0,'user_id':user_id,'touched':time.time(),'metadata':None,'iterator':None,'cursor':None,'last':None}
+  self.jobs[key]={'temp':tmp,'path':Path(tmp.name)/'upload.parquet','name':name,'size':size,'written':0,'user_id':user_id,'touched':time.time(),'hasher':hashlib.sha256(),'metadata':None,'iterator':None,'cursor':None,'last':None}
   self.jobs[key]['path'].touch()
   return {'upload_id':key,'chunk_bytes':CHUNK_BYTES,'offset':0,'max_window_rows':MAX_WINDOW_ROWS}
  def append(self,key,user_id,offset,data):
@@ -48,7 +49,7 @@ class ParquetUploads:
   elif offset!=job['written']:raise UploadConflict('Sai vị trí tải file. Tải lại từ đầu.')
   else:
    with job['path'].open('ab') as f:f.write(data)
-   job['written']+=len(data)
+   job['written']+=len(data);job['hasher'].update(data)
   result={'offset':job['written'],'complete':job['written']==job['size']}
   if result['complete']:result['metadata']=self.metadata(job)
   return result
@@ -66,22 +67,51 @@ class ParquetUploads:
    schema=reader.schema_arrow
    if len(schema.names)!=len(set(schema.names)):raise ValueError('File có tên cột trùng nhau. Đổi tên cột trước khi nhập.')
    if len(schema.names)>500:raise ValueError('File có quá nhiều cột; hãy xuất riêng các cột cần gán nhãn.')
-   columns=[{'name':field.name,'type':str(field.type)} for field in schema]
-   names={f.name.casefold():f.name for f in schema}
+   import pyarrow as pa
+   def textual(kind):return pa.types.is_string(kind) or pa.types.is_large_string(kind) or pa.types.is_string_view(kind) or pa.types.is_dictionary(kind) and textual(kind.value_type)
+   columns=[{'name':field.name,'type':str(field.type),'text_compatible':textual(field.type)} for field in schema]
+   names={field['name'].casefold():field['name'] for field in columns if field['text_compatible']}
    suggestion=next((names[n] for n in ['text','comment','content','body','review','sentence','comment_text','review_text','noi_dung','bình_luận'] if n in names),None)
-   job['metadata']={'name':job['name'],'rows':reader.metadata.num_rows,'columns':columns,'suggested_text_column':suggestion}
+   if suggestion is None and len(names)==1:suggestion=next(iter(names.values()))
+   job['metadata']={'name':job['name'],'rows':reader.metadata.num_rows,'sha256':job['hasher'].hexdigest(),'columns':columns,'suggested_text_column':suggestion}
    return job['metadata']
+  finally:reader.close()
+ def table(self,key,user_id,o):
+  job=self.get(key,user_id);meta=self.metadata(job);offset=o.get('column_offset',0)
+  if type(offset) is not int or offset<0 or offset>=max(1,len(meta['columns'])):raise ValueError('Trang cột không hợp lệ.')
+  columns=meta['columns'][offset:offset+20];names=[c['name'] for c in columns];reader=self.reader(job);rows=[]
+  try:
+   for group in range(reader.num_row_groups):
+    if not reader.metadata.row_group(group).num_rows:continue
+    expanded=sum(reader.metadata.row_group(group).column(i).total_uncompressed_size for i in range(reader.metadata.row_group(group).num_columns) if reader.metadata.row_group(group).column(i).path_in_schema.split('.')[0] in names)
+    if expanded>MAX_ROW_GROUP_BYTES:raise ValueError('Nhóm dữ liệu quá lớn để xem trên Render Free. Cần xuất file với row group nhỏ hơn.')
+    for batch in reader.iter_batches(batch_size=8,row_groups=[group],columns=names,use_threads=False):
+     for raw in batch.to_pylist():
+      row={}
+      for name in names:
+       value=raw.get(name)
+       if value is None:row[name]=''
+       elif isinstance(value,str):row[name]=value[:240]+('…' if len(value)>240 else '')
+       elif isinstance(value,(int,float,bool)):row[name]=str(value)
+       else:row[name]='['+type(value).__name__+']'
+      rows.append(row)
+     break
+    break
+   return {'metadata':meta,'columns':columns,'rows':rows,'column_offset':offset,'column_page_size':20}
   finally:reader.close()
  def options(self,job,o):
   meta=self.metadata(job);columns={c['name'] for c in meta['columns']}
   mapping={'text':o.get('text_column') or meta['suggested_text_column']}
-  if mapping['text'] not in columns:raise ValueError('Chọn đúng tên cột chứa bình luận trong danh sách cột Parquet.')
+  if mapping['text'] not in columns:raise ValueError('Chọn cột chứa bình luận trong bảng xem trước.')
+  if not next(c for c in meta['columns'] if c['name']==mapping['text'])['text_compatible']:raise ValueError('Cột đã chọn không phải văn bản. Bấm vào cột bình luận.')
   for key in ['context','source','synthetic']:
    col=o.get(key+'_column')
    if col and col not in columns:raise ValueError('Không có cột '+str(col)+' trong Parquet.')
    mapping[key]=col or None
   synthetic=o.get('synthetic',False)
   if type(synthetic) is not bool:raise ValueError('Loại dữ liệu mô phỏng không hợp lệ.')
+  if o.get('all_rows') is True or not any(k in o for k in ['start','count']):
+   return {'mapping':mapping,'synthetic':synthetic,'start':0,'end':meta['rows']}
   start=o.get('start',0);count=o.get('count',MAX_WINDOW_ROWS)
   if type(start) is not int or type(count) is not int or start<0 or not 1<=count<=MAX_WINDOW_ROWS or start>=meta['rows']:raise ValueError('Dòng bắt đầu tính từ 0; mỗi đợt cần 1–5.000 dòng và nằm trong file.')
   return {'mapping':mapping,'synthetic':synthetic,'start':start,'end':min(start+count,meta['rows'])}
@@ -140,6 +170,7 @@ class ParquetUploads:
  def action(self,path,user_id,o):
   if path.endswith('/start'):return self.start(user_id,o)
   key=o.get('upload_id')
+  if path.endswith('/table'):return self.table(key,user_id,o)
   if path.endswith('/preview'):return self.preview(key,user_id,o)
   if path.endswith('/rows'):return self.batch(key,user_id,o)
   if path.endswith('/close'):self.get(key,user_id);self.remove(key);return {'closed':True}

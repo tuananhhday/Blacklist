@@ -12,6 +12,7 @@ import administration as adminwork
 from git_backup import GitBackup
 import parquet_import
 import import_history
+from native_parquet import NativeParquetImports,SCHEMA as NATIVE_IMPORT_SCHEMA
 
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('STUDIO_DATA',str(ROOT/'data')))
@@ -28,7 +29,7 @@ def now(): return datetime.now(timezone.utc).isoformat()
 def dumps(v): return json.dumps(v,ensure_ascii=False,allow_nan=False)
 def norm(s): return re.sub(r'\s+',' ',unicodedata.normalize('NFC',s)).strip().casefold()
 def connect():
- c=sqlite3.connect(DATA/'studio.sqlite3',timeout=30);c.row_factory=sqlite3.Row;c.execute('PRAGMA foreign_keys=ON');return c
+ c=sqlite3.connect(DATA/'studio.sqlite3',timeout=30);c.row_factory=sqlite3.Row;c.execute('PRAGMA foreign_keys=ON');c.create_function('casefold',1,lambda value:(value or '').casefold(),deterministic=True);return c
 
 def init():
  DATA.mkdir(parents=True,exist_ok=True);EXPORTS.mkdir(parents=True,exist_ok=True)
@@ -38,6 +39,8 @@ def init():
   c.executescript(work.SCHEMA)
   auth.migrate(c,USERNAME,PASSWORD,now())
   c.executescript(import_history.SCHEMA)
+  c.executescript(NATIVE_IMPORT_SCHEMA)
+  c.execute("UPDATE parquet_import_runs SET state='paused',error='Server đã khởi động lại. Chọn lại file để tiếp tục từ phần đã lưu.' WHERE state='running'")
   c.execute("INSERT OR IGNORE INTO workspace_meta VALUES('database_id',?)",(uuid.uuid4().hex,))
   c.executemany('INSERT OR IGNORE INTO categories VALUES(?,?)',CATEGORIES.items())
 
@@ -101,45 +104,67 @@ def validate_rule(o):
   require(all(t['actual']==t['expected'] for t in results),'Có câu kiểm tra chưa đạt')
  return rule,results
 
-def state(c,user=None):
+def sample_state(c,row):
+ sample=dict(row);sid=sample['id'];review=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(sid,)).fetchone()
+ sample['review']=dict(review) if review else None
+ if review:sample['review']['labels']=json.loads(review['labels_json'])
+ assignment=c.execute('SELECT * FROM task_assignments WHERE sample_id=?',(sid,)).fetchone()
+ sample['assignment']=dict(assignment) if assignment else None
+ sample['work_pending']=assignment['state']=='pending' if assignment else bool(sample['needs_review']) or not bool(review)
+ audit=c.execute('SELECT a.* FROM review_audits a JOIN reviews r ON r.id=a.review_id WHERE r.sample_id=? ORDER BY r.revision DESC LIMIT 1',(sid,)).fetchone()
+ sample['audit_note']=dict(audit) if audit else None
+ return sample
+
+def state(c,user=None,query=None):
  if not c.in_transaction:c.execute('BEGIN')
- samples=[]
- query='SELECT s.* FROM samples s';args=[]
- if user and user['role']=='member':query+=' JOIN task_assignments a ON a.sample_id=s.id WHERE s.archived_at IS NULL AND a.user_id=?';args=[user['id']]
- if not user or user['role']=='admin':query+=' WHERE s.archived_at IS NULL'
- for r in c.execute(query+' ORDER BY s.id DESC',args):
-  s=dict(r);rr=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(s['id'],)).fetchone()
-  s['review']=dict(rr) if rr else None
-  if rr:s['review']['labels']=json.loads(rr['labels_json'])
-  assignment=c.execute('SELECT * FROM task_assignments WHERE sample_id=?',(s['id'],)).fetchone()
-  s['assignment']=dict(assignment) if assignment else None
-  s['work_pending']=assignment['state']=='pending' if assignment else bool(s['needs_review']) or not bool(rr)
-  audit=c.execute('SELECT a.* FROM review_audits a JOIN reviews r ON r.id=a.review_id WHERE r.sample_id=? ORDER BY r.revision DESC LIMIT 1',(s['id'],)).fetchone()
-  s['audit_note']=dict(audit) if audit else None
-  samples.append(s)
+ query=query or {};page=max(0,int(query.get('page',['0'])[0]));size=100
+ scope='s.archived_at IS NULL';args=[]
+ if user and user['role']=='member':scope+=' AND a.user_id=?';args=[user['id']]
+ joins=' FROM samples s LEFT JOIN task_assignments a ON a.sample_id=s.id LEFT JOIN reviews r ON r.id=(SELECT r2.id FROM reviews r2 WHERE r2.sample_id=s.id ORDER BY r2.revision DESC LIMIT 1)'
+ pending="CASE WHEN a.sample_id IS NOT NULL THEN a.state='pending' ELSE s.needs_review=1 OR r.id IS NULL END"
+ count=c.execute('SELECT COUNT(*),SUM('+pending+')'+joins+' WHERE '+scope,args).fetchone();total=count[0];waiting=count[1] or 0
+ filtered=scope;params=list(args);q=query.get('q',[''])[0][:200];choice=query.get('filter',['all'])[0]
+ if q:filtered+=' AND (instr(casefold(s.text),?)>0 OR CAST(s.id AS TEXT) LIKE ?)';params+=[q.casefold(),'%'+q+'%']
+ if choice=='pending':filtered+=' AND ('+pending+')'
+ elif choice in ['ALLOW','VIOLATION','UNSURE']:filtered+=' AND r.decision=?';params.append(choice)
+ matched=c.execute('SELECT COUNT(*)'+joins+' WHERE '+filtered,params).fetchone()[0]
+ samples=[sample_state(c,row) for row in c.execute('SELECT s.*'+joins+' WHERE '+filtered+' ORDER BY s.id DESC LIMIT ? OFFSET ?',params+[size,page*size])]
+ rulequery='SELECT * FROM rules';ruleargs=[]
+ if user and user['role']=='member':rulequery+=' WHERE created_by_user_id=?';ruleargs=[user['id']]
  rules=[]
- rulequery='SELECT * FROM rules'+(' WHERE created_by_user_id=?' if user and user['role']=='member' else '')
- for r in c.execute(rulequery+' ORDER BY id DESC',args):
-  x=dict(r);x['config']=json.loads(x.pop('config_json'));x['tests']=json.loads(x.pop('tests_json'));rules.append(x)
+ for row in c.execute(rulequery+' ORDER BY id DESC',ruleargs):
+  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(rule)
  claims=[dict(r) for r in c.execute('SELECT sample_id,reviewer,expires_at FROM work_claims WHERE expires_at>?',(time.time(),))]
- if user and user['role']=='member':
-  allowed={s['id'] for s in samples};claims=[r for r in claims if r['sample_id'] in allowed]
- meta=dict(c.execute('SELECT key,value FROM workspace_meta'))
- return {'categories':CATEGORIES,'samples':samples,'rules':rules,'claims':claims,'database_id':meta['database_id'],'backup':BACKUP.status(int(meta['version'])) if not user or user['role']=='admin' else {'version':int(meta['version']),'synced_version':BACKUP.last_version,'configured':BACKUP.configured,'synced':BACKUP.status(int(meta['version']))['synced'],'message':'Liên hệ admin nếu backup chưa đồng bộ.'}}
+ allowed={sample['id'] for sample in samples};claims=[r for r in claims if r['sample_id'] in allowed]
+ meta=dict(c.execute('SELECT key,value FROM workspace_meta'));backup=BACKUP.status(int(meta['version']))
+ if user and user['role']=='member':backup={k:backup[k] for k in ['version','synced_version','configured','synced']}
+ return {'categories':CATEGORIES,'samples':samples,'rules':rules,'claims':claims,'database_id':meta['database_id'],'backup':backup,
+  'stats':{'total':total,'pending':waiting,'done':total-waiting,'active_rules':sum(r['status']=='active' for r in rules),'draft_rules':sum(r['status']=='draft' for r in rules)},
+  'queue':{'page':page,'page_size':size,'total':matched}}
 
 def atomic(path,text):
  tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(text,encoding='utf8');tmp.replace(path)
 def export_all(c):
- s=state(c);stamp=now()
- atomic(EXPORTS/'blacklist.json',dumps({'schema_version':1,'exported_at':stamp,'normalization':'NFC, whitespace, casefold; preserve accents','action':'REVIEW','rules':[r for r in s['rules'] if r['status']=='active']}))
- atomic(EXPORTS/'blacklist_drafts.json',dumps({'exported_at':stamp,'rules':s['rules']}))
- training=[]
- for sample in s['samples']:
-  r=sample['review']
-  if r and r['decision']!='UNSURE':
-   training.append({'id':sample['id'],'text':sample['text'],'context':sample['context'],'source':sample['source'],'synthetic':bool(sample['synthetic']),'text_hash':sample['fingerprint'],'review_id':r['id'],'review_revision':r['revision'],'policy_version':r['policy_version'],'labels':r['labels'],'label_mask':{k:int(v is not None) for k,v in r['labels'].items()},'intent':r['intent'],'evidence':r['evidence'],'reason':r['reason']})
- atomic(EXPORTS/'training_data.jsonl',''.join(dumps(x)+'\n' for x in training))
- atomic(EXPORTS/'backup.sql','\n'.join(c.iterdump()))
+ # Stream files rather than building all imported text, reviews and SQL in RAM.
+ if not c.in_transaction:c.execute('BEGIN')
+ stamp=now();rules=[]
+ for row in c.execute('SELECT * FROM rules ORDER BY id DESC'):
+  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(rule)
+ atomic(EXPORTS/'blacklist.json',dumps({'schema_version':1,'exported_at':stamp,'normalization':'NFC, whitespace, casefold; preserve accents','action':'REVIEW','rules':[r for r in rules if r['status']=='active']}))
+ atomic(EXPORTS/'blacklist_drafts.json',dumps({'exported_at':stamp,'rules':rules}))
+ target=EXPORTS/'training_data.jsonl';temp=target.with_suffix('.jsonl.tmp')
+ with temp.open('w',encoding='utf8') as output:
+  for row in c.execute("SELECT s.* FROM samples s WHERE s.archived_at IS NULL AND s.needs_review=0 AND EXISTS(SELECT 1 FROM reviews r WHERE r.sample_id=s.id)"):
+   sample=dict(row);r=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(sample['id'],)).fetchone()
+   if r['decision']=='UNSURE':continue
+   labels=json.loads(r['labels_json'])
+   data={'id':sample['id'],'text':sample['text'],'context':sample['context'],'source':sample['source'],'synthetic':bool(sample['synthetic']),'text_hash':sample['fingerprint'],'review_id':r['id'],'review_revision':r['revision'],'policy_version':r['policy_version'],'labels':labels,'label_mask':{k:int(v is not None) for k,v in labels.items()},'intent':r['intent'],'evidence':r['evidence'],'reason':r['reason']}
+   output.write(dumps(data)+'\n')
+ temp.replace(target)
+ target=EXPORTS/'backup.sql';temp=target.with_suffix('.sql.tmp')
+ with temp.open('w',encoding='utf8') as output:
+  for line in c.iterdump():output.write(line+'\n')
+ temp.replace(target)
 
 
 def import_blacklist(c,o):
@@ -161,6 +186,8 @@ def import_blacklist(c,o):
    rid=c.execute('INSERT INTO rules(name,category,kind,config_json,tests_json,status,version,source_sample_id,reviewer,reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',args).lastrowid
    c.execute('INSERT INTO rule_history(rule_id,version,snapshot_json,created_at) VALUES(?,?,?,?)',(rid,1,dumps(dict(r,id=rid,version=1,action='REVIEW')),now()))
  return {'preview':o.get('preview',True),'added':len(prepared),'duplicates':duplicates,'items':[{'name':r['name'],'kind':r['kind'],'category':r['category']} for r in prepared]}
+
+NATIVE_IMPORTS=NativeParquetImports(PARQUET,connect,MUTATION_LOCK,BACKUP)
 
 class Handler(BaseHTTPRequestHandler):
  def setup(self):
@@ -189,10 +216,16 @@ class Handler(BaseHTTPRequestHandler):
   try:
    if path.startswith('/api/admin/') or path in ['/api/history','/api/backup/status'] or path.startswith('/export/'):auth.admin(self.user)
    if path=='/api/state':
-    with connect() as c:self.reply(state(c,self.user))
+    with connect() as c:self.reply(state(c,self.user,query))
+   elif path=='/api/sample':
+    with connect() as c:
+     sid=int(query.get('id',['0'])[0]);auth.sample_access(c,self.user,sid)
+     self.reply(sample_state(c,c.execute('SELECT * FROM samples WHERE id=?',(sid,)).fetchone()))
    elif path=='/api/session':self.reply({'token':self.user['csrf'],'user':auth.public(self.user)})
    elif path=='/api/admin/overview':
     with connect() as c:self.reply(adminwork.overview(c))
+   elif path=='/api/parquet/import/status':
+    auth.admin(self.user);self.reply(NATIVE_IMPORTS.status(self.user['id'],query.get('batch_id',[None])[0]))
    elif path=='/api/admin/imports':
     with connect() as c:self.reply(import_history.list_batches(c,query.get('page',['0'])[0]))
    elif path=='/api/admin/samples':
@@ -240,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
    if not self.authorized():return
    require(hmac.compare_digest(self.headers.get('X-Studio-Token',''),self.user['csrf']),'Phiên hết hạn. Tải lại trang.')
    if path.startswith(('/api/admin/','/api/parquet/')) or path in ['/api/import','/api/blacklist/import','/api/backup/sync']:auth.admin(self.user)
+   if path=='/api/parquet/import/start':return self.reply(NATIVE_IMPORTS.start(auth.public(self.user),o))
+   if path=='/api/parquet/import/pause':return self.reply(NATIVE_IMPORTS.pause(self.user['id'],o.get('batch_id')))
    if path.startswith('/api/parquet/'):return self.reply(PARQUET.action(path,self.user['id'],o))
    raw_client=o.get('client_id','')
    require(isinstance(raw_client,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',raw_client)),'Thiếu mã phiên làm việc.')
@@ -279,16 +314,9 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/backup/sync':result={'requested':True}
     elif path=='/api/blacklist/import':result=import_blacklist(c,o)
     elif path=='/api/import':
-     rows=o.get('rows',[]);require(isinstance(rows,list) and 0<len(rows)<=1000,'Mỗi lần nhập 1–1000 mẫu');added=0;inserted=[]
+     rows=o.get('rows',[]);require(isinstance(rows,list) and 0<len(rows)<=1000,'Mỗi lần nhập 1–1000 mẫu')
      batch_id=import_history.begin(c,o,self.user,now())
-     for row in rows:
-      text=field(row,'text',20000,True);context=field(row,'context');source=field(row,'source',500,True);synthetic=row.get('synthetic',True)
-      require(isinstance(synthetic,bool),'synthetic cần true/false')
-      fp=hashlib.sha256((norm(text)+'\x00'+norm(context)).encode()).hexdigest()
-      cur=c.execute('INSERT OR IGNORE INTO samples(text,context,source,synthetic,fingerprint,created_at) VALUES(?,?,?,?,?,?)',(text,context,source,int(synthetic),fp,now()));added+=cur.rowcount
-      if cur.rowcount:inserted.append(cur.lastrowid)
-     import_history.finish(c,batch_id,inserted,len(rows),now())
-     result={'added':added,'duplicates':len(rows)-added,'import_batch_id':batch_id}
+     result=import_history.store_rows(c,rows,batch_id,now())
     elif path=='/api/review':
      sid=o.get('sample_id');sample=c.execute('SELECT * FROM samples WHERE id=?',(sid,)).fetchone();require(sample is not None,'Không có mẫu')
      work.check_claim(c,sid,o)

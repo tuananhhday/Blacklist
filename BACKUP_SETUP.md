@@ -32,7 +32,7 @@ Render Free có ổ tạm. Nếu đang có dữ liệu, tải `backup.sql` và t
 
 ## Giới hạn cần biết
 
-Git là bản sao lưu, không phải database dùng chung giữa nhiều instance. Chỉ chạy **một instance, một tiến trình app**; nhiều trình duyệt có thể gán nhãn cùng lúc trên instance đó. Gói Free có thể ngủ; người dùng cần chờ lúc mở lại. GitHub có hạn mức API, nên phù hợp nhóm nhỏ và dữ liệu vừa phải. Snapshot nén tối đa 20 MB, phục hồi tối đa 100 MB giải nén.
+Git là bản sao lưu, không phải database dùng chung giữa nhiều instance. Chỉ chạy **một instance, một tiến trình app**; nhiều trình duyệt có thể gán nhãn cùng lúc trên instance đó. Gói Free có thể ngủ; người dùng cần chờ lúc mở lại. GitHub có hạn mức API, nên phù hợp nhóm nhỏ và dữ liệu vừa phải. Snapshot nén tối đa 20 MB, phục hồi tối đa 1 GiB giải nén theo stream.
 
 Không hệ thống nào có thể đẩy dữ liệu mới lên Git khi server đã đứng hoàn toàn hoặc mạng đã mất. Ký tự chưa kịp gửi vẫn nằm trong bản nháp thiết bị nếu trình duyệt cho phép lưu; đừng xóa dữ liệu trình duyệt khi còn nháp. Dùng “Tải nháp trên thiết bị” để lấy JSON; file này có thể nhập lại các bình luận qua Nhập từ file, sau đó kiểm tra lại nhãn. Backup Git định kỳ có khoảng trễ; kiểm tra trạng thái trước khi redeploy hoặc kết thúc phiên.
 

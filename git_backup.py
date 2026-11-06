@@ -1,5 +1,5 @@
 """Private GitHub snapshots; credentials stay in Render environment variables."""
-import base64, gzip, io, json, os, re, sqlite3, tempfile, threading
+import base64, gzip, io, json, os, re, sqlite3, tempfile, threading,shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -34,11 +34,18 @@ class GitBackup:
   encoded=remote.get('content')
   if not encoded:encoded=self.request('/repos/'+self.repo+'/git/blobs/'+remote['sha'])['content']
   packed=base64.b64decode(encoded)
-  with gzip.GzipFile(fileobj=io.BytesIO(packed)) as stream:raw=stream.read(100_000_001)
-  if len(raw)>100_000_000 or not raw.startswith(b'SQLite format 3\x00'):raise ValueError('Backup SQLite không hợp lệ hoặc quá lớn.')
   self.data.mkdir(parents=True,exist_ok=True);temp=self.data/'restoring.sqlite3'
   try:
-   temp.write_bytes(raw)
+   with gzip.GzipFile(fileobj=io.BytesIO(packed)) as stream,temp.open('wb') as output:
+    header=stream.read(16)
+    if header!=b'SQLite format 3\x00':raise ValueError('Backup không phải SQLite hợp lệ.')
+    output.write(header);size=len(header)
+    while True:
+     block=stream.read(1024*1024)
+     if not block:break
+     size+=len(block)
+     if size>1024*1024*1024:raise ValueError('Backup vượt giới hạn phục hồi 1 GiB.')
+     output.write(block)
    with sqlite3.connect(temp) as db:
     if db.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('Backup bị lỗi integrity.')
     if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='samples'").fetchone():raise ValueError('Backup không phải dữ liệu Studio.')
@@ -75,8 +82,10 @@ class GitBackup:
      copy.close();source.close()
      if version==self.last_version and not force:
       self.error=None;return self.status(version)
-     packed=gzip.compress(dest.read_bytes(),mtime=0)
-     if len(packed)>20_000_000:raise ValueError('Backup vượt 20 MB nén. Tải backup.sql và chuyển sang database lưu bền.')
+     archive=Path(temp)/'snapshot.sqlite3.gz'
+     with dest.open('rb') as raw,gzip.open(archive,'wb',compresslevel=9) as compressed:shutil.copyfileobj(raw,compressed,length=1024*1024)
+     if archive.stat().st_size>20_000_000:raise ValueError('Backup vượt 20 MB nén. Tải backup.sql và chuyển sang database lưu bền.')
+     packed=archive.read_bytes()
     remote=self.remote_file();sha=remote['sha'] if remote else None
     if self.remote_sha is not None and sha!=self.remote_sha:raise ValueError('Backup đã thay đổi từ instance khác. Dừng ghi để tránh ghi đè; chỉ chạy một instance.')
     body={'message':'Studio snapshot '+datetime.now(timezone.utc).isoformat(),'branch':self.branch,'content':base64.b64encode(packed).decode()}

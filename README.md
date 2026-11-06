@@ -36,10 +36,11 @@ Danh tính người duyệt lấy từ tài khoản đã xác thực; không nh�
 
 ## Nhập mẫu từ file
 
-Thêm mẫu → Nhập từ file → chọn CSV, JSON, JSONL, TXT hoặc một file Parquet → Xem trước → Nhập vào hàng đợi. CSV/JSON/JSONL/TXT tối đa 5 MB mỗi file và 5.000 câu mỗi lượt; gửi từng lô 50 câu và hiển thị tiến độ. Parquet tối đa 256 MiB, một file mỗi lượt; tải theo khối 1 MiB rồi chọn cột và phạm vi tối đa 5.000 dòng/đợt. Có thể thử lại phần còn lại khi mất mạng; nội dung và ngữ cảnh trùng được bỏ qua bằng fingerprint có UNIQUE trong SQL.
+Thêm mẫu → Nhập từ file → chọn file. Với CSV/JSON/JSONL/TXT: Xem trước → Nhập vào hàng đợi. Với Parquet: file tự mở thành bảng → bấm tiêu đề cột bình luận → Nhập toàn bộ. CSV/JSON/JSONL/TXT tối đa 5 MB mỗi file và 5.000 câu mỗi lượt; gửi từng lô 50 câu và hiển thị tiến độ. Parquet tối đa 256 MiB, một file mỗi lượt; chọn cột bằng click và nhập toàn bộ file bằng một lần bấm. Không cần gõ tên cột hoặc chia số dòng thủ công. Có thể thử lại phần còn lại khi mất mạng; nội dung và ngữ cảnh trùng được bỏ qua bằng fingerprint có UNIQUE trong SQL.
 
-- Parquet (`.parquet`, `.pq`): tải file, xem tên/kiểu cột và tổng số dòng; chọn cột bình luận. Tự gợi ý text/comment/content/body/review/sentence và một số tên phổ biến, không phân biệt hoa thường. Có thể chọn thêm cột context, source, synthetic. Đọc các cột được chọn theo batch, hỗ trợ codec của PyArrow như Snappy/Zstandard/gzip. Chọn dòng bắt đầu tính từ 0 và số dòng (1–5.000); nhập xong tự chuyển ô bắt đầu sang đợt kế tiếp, file tạm được giữ 30 phút không hoạt động. Dòng trống/nội dung trên 20.000 ký tự được đếm và bỏ qua, cột không phải văn bản báo lỗi để chọn lại. Không tự áp dụng nhãn trong file.
-- Parquet chỉ admin được tải/đọc, dùng session và CSRF như import thường. File gốc được giữ tạm ngoài database, không đẩy file thô lên Git; dữ liệu đã xác nhận nhập đi qua cùng cơ chế chống trùng và backup. File tạm mất khi Render restart thì tải lại; các mẫu đã nhập vẫn được kiểm tra trùng. Mỗi row group của các cột đã chọn tối đa 128 MiB giải nén để hạn chế RAM trên gói Free.
+- Parquet (`.parquet`, `.pq`): chọn file để tự mở bảng xem trước 8 dòng; bấm tiêu đề cột hoặc ô trong cột văn bản. Cột số/nhãn không được chọn làm bình luận. App tự gợi ý cột phổ biến; có thể đổi bằng click. Nếu nhiều cột, dùng Cột trước/Cột tiếp để xem. **Nhập toàn bộ N dòng** chạy một job trên server, không gửi từng nhóm dữ liệu qua trình duyệt. Context/source/synthetic là tùy chọn thu gọn, có thể bỏ qua. Không tự áp dụng nhãn trong file.
+- Server đọc theo lô nhỏ, lưu SQLite theo checkpoint nhưng đây chỉ là cách xử lý bên trong: người dùng không phải chia đợt. Có thanh tiến độ, số thêm/trùng/bỏ qua và Tạm dừng/Tiếp tục. Đóng hộp hoặc đóng trình duyệt không dừng job khi server vẫn chạy; mở Nhập từ file để theo dõi tiếp. Nếu server restart mất file tạm, chọn lại đúng file/cột: app nhận diện SHA-256 và tiếp tục checkpoint đã lưu nếu database/backup còn. Tạm dừng có thể hoàn thành lô đang xử lý trước khi dừng.
+- Dòng trống/nội dung trên 20.000 ký tự được đếm và bỏ qua. File gốc được giữ tạm ngoài database, không đẩy file thô lên Git. Tất cả mẫu của file thuộc một đợt nhập để hoàn tác; job phải dừng xong trước khi hoàn tác. Chỉ admin được mở/nhập file; API vẫn kiểm tra session và CSRF.
 - TXT: mỗi dòng một bình luận.
 - JSON: mảng chuỗi hoặc object; cũng nhận object có `samples` hay `comments`.
 - CSV/JSON/JSONL: tự nhận cột `text`, `comment`, `content`, `body`, hoặc nhập tên cột riêng. Các trường tùy chọn: `context`, `source`, `synthetic`. Source thiếu dùng tên file; synthetic thiếu dùng checkbox dữ liệu mô phỏng (mặc định không chọn). Nếu đã có synthetic thì phải là true/false.
@@ -47,7 +48,7 @@ Thêm mẫu → Nhập từ file → chọn CSV, JSON, JSONL, TXT hoặc một f
 
 ## Sửa, xóa và hoàn tác dữ liệu vừa nhập
 
-Mỗi lần thêm mẫu hoặc nhập file có mã đợt riêng; các lô 50 câu của cùng file/phạm vi Parquet được gom vào một đợt. Khi nhập xong, có nút **Hoàn tác đợt này** ngay trong hộp nhập và thanh **Hoàn tác đợt vừa thêm** trên trang.
+Mỗi lần thêm mẫu hoặc nhập file có mã đợt riêng; các lô của cùng file Parquet được gom vào một đợt, không giới hạn 5.000 dòng cho thao tác Nhập toàn bộ. Khi nhập xong, có nút **Hoàn tác đợt này** ngay trong hộp nhập và thanh **Hoàn tác đợt vừa thêm** trên trang.
 
 Admin → Giám sát & chia việc → Quản lý bình luận → **Lịch sử nhập** hiển thị nguồn, thời gian, người tạo, số câu mới/trùng và số đang hiển thị. Bấm **Xem dữ liệu** để lọc đúng đợt rồi sửa/xóa từng câu. Bấm **Hoàn tác** để ẩn cả đợt nhập nhầm, hoặc **Khôi phục** để đưa về trạng thái trước khi hoàn tác.
 
@@ -79,7 +80,7 @@ Phục hồi SQL thủ công: dừng app, giữ bản database cũ, tạo SQLite
 ## Kiểm tra
 
 ```sh
-python -m unittest -v test_app test_render test_collaboration test_accounts test_parquet test_import_history
+python -m unittest -v test_app test_render test_collaboration test_accounts test_parquet test_native_parquet test_import_history
 node --check static/app.js
 node --check static/admin.js
 node --check static/parquet.js
@@ -87,3 +88,5 @@ node test_ui.cjs
 ```
 
 Backend kiểm tra workflow, đăng nhập và phân quyền, rollback, chống trùng, nhiều người nhận đồng thời, hết lượt, backup/restore và từ chối repo public/xung đột remote. Kiểm thử Node dùng DOM giả lập cho parser file, nháp, hoàn tác, giảm chuyển động và gửi lại sau khi server đổi phiên; không thay thế kiểm tra bố cục trên trình duyệt. test_parquet tạo file thật Snappy/Zstd/gzip, kiểm tra tải file hơn 32 MiB qua HTTP, chọn phạm vi dòng và chống trùng; không đưa dữ liệu khách hàng vào Git.
+
+Danh sách bình luận dùng phân trang 100 mẫu/lần và số đếm tổng riêng, để không tải cả kho lớn vào RAM/trình duyệt. Nhận mẫu tiếp theo vẫn lấy đúng mẫu được server giao dù mẫu nằm ngoài trang hiện tại. Xuất SQL/training chạy streaming; job Parquet không tái tạo toàn bộ file xuất sau mỗi lô. Backup snapshot được nén/giải nén theo stream; Git vẫn có giới hạn snapshot nén 20 MB và hiển thị trạng thái khi chưa đồng bộ.

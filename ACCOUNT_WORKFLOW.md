@@ -4,7 +4,7 @@
 
 1. Mở web. Tài khoản admin là `STUDIO_USERNAME` (mặc định `admin`); mã đăng nhập là `STUDIO_PASSWORD` hiện có trong Environment trên Render. Đây là mã riêng của admin, không dùng làm mã chung cho nhóm.
 2. Vào Giám sát & chia việc → Tạo tài khoản thành viên. Điền tài khoản (3–40 chữ thường/số/`_.-`) và tên hiển thị. App sinh mã riêng, chỉ hiển thị lần tạo/cấp mã thành công. Gửi riêng **tài khoản + mã** cho đúng người; app không tự nhắn cho thành viên.
-3. Thêm/import dữ liệu tại Quản lý bình luận. Với Parquet, chọn một file, bấm Xem trước để tải và chọn cột bình luận/phạm vi dòng rồi xác nhận nhập. Chọn người nhận việc, nhập số câu tối đa/người (0 là chia hết), xem trước rồi xác nhận. Mỗi bình luận chỉ thuộc một người tại một thời điểm. Những câu đã giao hoặc đang được giữ không bị chia chồng.
+3. Thêm/import dữ liệu tại Quản lý bình luận. Với Parquet, chọn file để mở bảng xem trước, bấm vào tiêu đề cột bình luận rồi bấm Nhập toàn bộ. Không cần nhập tên cột hoặc chia dòng; có tiến độ và nút tạm dừng/tiếp tục. Đóng hộp không dừng nhập trên server. Chọn người nhận việc, nhập số câu tối đa/người (0 là chia hết), xem trước rồi xác nhận. Mỗi bình luận chỉ thuộc một người tại một thời điểm. Những câu đã giao hoặc đang được giữ không bị chia chồng.
 4. Thành viên đăng nhập, thấy phần việc riêng và số bình luận còn lại, nhận câu tiếp theo, lưu liên tục. Có thể chọn gửi thêm nháp blacklist khi lưu câu vi phạm. Thành viên không có quyền import, xem kho của người khác, xuất SQL hoặc bật luật.
 5. Admin xem tiến độ/lịch sử, mở từng lượt để kiểm tra. Có nút Nhãn đạt hoặc Trả lại để sửa; khi trả lại cần ghi lý do. Câu quay về hàng đợi của thành viên, lịch sử nhãn cũ được giữ.
 

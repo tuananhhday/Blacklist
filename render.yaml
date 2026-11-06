@@ -3,7 +3,7 @@ services:
     name: blacklist-studio
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python -m compileall -q app.py accounts.py administration.py collaboration.py git_backup.py parquet_import.py import_history.py
+    buildCommand: pip install -r requirements.txt && python -m compileall -q app.py accounts.py administration.py collaboration.py git_backup.py parquet_import.py native_parquet.py import_history.py
     startCommand: python app.py
     healthCheckPath: /health
     envVars:

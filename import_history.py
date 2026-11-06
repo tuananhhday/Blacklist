@@ -1,5 +1,5 @@
 """Reversible import batches: link only newly inserted samples, never duplicates."""
-import json,re,time,uuid
+import json,re,time,uuid,hashlib,unicodedata
 from pathlib import Path
 from collaboration import Conflict
 
@@ -32,6 +32,7 @@ def change(c,action,o,stamp):
  key=o.get('batch_id');batch=c.execute('SELECT * FROM import_batches WHERE id=?',(key,)).fetchone()
  if not batch:raise ValueError('Không có đợt nhập này.')
  if action=='undo':
+  if c.execute("SELECT 1 FROM parquet_import_runs WHERE batch_id=? AND state='running'",(key,)).fetchone():raise Conflict('File vẫn đang nhập. Bấm Tạm dừng, chờ dừng xong rồi hoàn tác đợt.')
   if batch['status']=='undone':return {'status':'undone','changed':0}
   live=c.execute('''SELECT COUNT(*) FROM import_batch_samples l JOIN work_claims w ON w.sample_id=l.sample_id
     WHERE l.batch_id=? AND w.expires_at>?''',(key,time.time())).fetchone()[0]
@@ -55,3 +56,20 @@ def change(c,action,o,stamp):
   c.execute("UPDATE import_batches SET status='active',updated_at=? WHERE id=?",(stamp,key))
   return {'status':'active','changed':len(ids),'message':'Đã khôi phục các bình luận do lần hoàn tác này ẩn. Các lần xóa riêng được giữ nguyên.'}
  raise ValueError('Thao tác đợt nhập không hợp lệ.')
+
+
+def store_rows(c,rows,key,stamp):
+ inserted=[]
+ normalize=lambda value:re.sub(r'\s+',' ',unicodedata.normalize('NFC',value)).strip().casefold()
+ for row in rows:
+  if not isinstance(row,dict):raise ValueError('Mỗi bình luận cần là object.')
+  text=row.get('text','');context=row.get('context','');source=row.get('source','');synthetic=row.get('synthetic',True)
+  if not isinstance(text,str) or not text.strip() or len(text)>20000:raise ValueError('Nội dung cần từ 1–20.000 ký tự.')
+  if not isinstance(context,str) or len(context)>20000:raise ValueError('Ngữ cảnh tối đa 20.000 ký tự.')
+  if not isinstance(source,str) or not source.strip() or len(source)>500:raise ValueError('Nguồn cần từ 1–500 ký tự.')
+  if type(synthetic) is not bool:raise ValueError('synthetic cần true/false.')
+  fingerprint=hashlib.sha256((normalize(text)+'\x00'+normalize(context)).encode()).hexdigest()
+  cursor=c.execute('INSERT OR IGNORE INTO samples(text,context,source,synthetic,fingerprint,created_at) VALUES(?,?,?,?,?,?)',(text.strip(),context.strip(),source.strip(),int(synthetic),fingerprint,stamp))
+  if cursor.rowcount:inserted.append(cursor.lastrowid)
+ finish(c,key,inserted,len(rows),stamp)
+ return {'added':len(inserted),'duplicates':len(rows)-len(inserted),'import_batch_id':key}
