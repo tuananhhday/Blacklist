@@ -13,7 +13,9 @@ Nếu tạo Web Service thủ công: runtime Python; build `python -m compileall
 
 ## Thao tác
 - “Thêm mẫu”: nhập câu, ngữ cảnh, nguồn, đánh dấu tự viết hay thực tế; lưu vào kho.
-- Đọc mẫu, chọn 9 nhãn 0/1/chưa kiểm tra, bằng chứng, hành vi, kết luận và lý do; lưu. Nhãn chưa kiểm tra không thành 0.
+- Mở Gán nhãn: mẫu chưa duyệt đầu tiên được chọn sẵn. Bấm Có / Không / Chưa kiểm tra ở từng nhóm; có thể có nhiều nhóm vi phạm. Chọn Có tự đề xuất kết luận Vi phạm.
+- Nếu đã kiểm tra đủ, bấm “Đã kiểm tra: các nhóm còn lại không vi phạm”; thao tác này chỉ đổi nhóm chưa kiểm tra sang Không. Chọn kết luận rồi Lưu & tiếp theo (Ctrl/Cmd + Enter). Có nút bỏ qua câu; chuyển câu khi chưa lưu sẽ hỏi trước.
+- Bằng chứng, hành vi và ghi chú nằm trong phần thu gọn, không bắt buộc. Khi bỏ trống ghi chú, hệ thống lưu tóm tắt kết luận và các nhãn đã chọn. Nhãn chưa kiểm tra vẫn là null và label_mask=0 khi xuất; không tự biến thành nhãn âm. Lịch sử và kiểm tra phiên bản duyệt được giữ nguyên.
 - Tạo blacklist từ câu vi phạm đã lưu hoặc tạo mục thủ công. Nháp không nằm trong blacklist đang bật.
 - “Dữ liệu & xuất file” → Nhập blacklist có sẵn → chọn file → Xem trước → Nhập vào kho. JSON xuất từ bản local cũ dùng được. Mục trùng theo loại + nhóm + điều kiện được bỏ qua. Tất cả nhập thành nháp, không ghi đè mục cũ hay bật theo file.
 - JSON: object có rules hoặc mảng luật, mỗi luật gồm name, category, kind, config, tests (tùy chọn), reason (tùy chọn). Kiểu exact/url/domain dùng config.pattern; combined dùng config.topic/behavior/context là danh sách chuỗi. Category dùng mã trong sql/002_categories.sql.
