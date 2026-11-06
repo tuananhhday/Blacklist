@@ -1,0 +1,48 @@
+"""Integration checks: temporary database only, never modifies user data."""
+import json, os, subprocess, sys, tempfile, time, unittest
+from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+
+class Workflow(unittest.TestCase):
+ @classmethod
+ def setUpClass(cls):
+  cls.temp=tempfile.TemporaryDirectory();cls.root=Path(cls.temp.name);cls.base='http://127.0.0.1:18765'
+  env=dict(os.environ,STUDIO_DATA=str(cls.root/'data'),STUDIO_EXPORTS=str(cls.root/'exports'),PORT='18765')
+  cls.process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('app.py'))],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  for _ in range(60):
+   try:
+    with urlopen(cls.base+'/api/session') as r:cls.token=json.load(r)['token']
+    break
+   except OSError:time.sleep(.1)
+  else:raise RuntimeError('Server failed to start')
+ @classmethod
+ def tearDownClass(cls):cls.process.terminate();cls.process.wait(timeout=5);cls.temp.cleanup()
+ def call(self,path,data=None,token=True):
+  req=Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers={'Content-Type':'application/json',**({'X-Studio-Token':self.token} if token else {})})
+  with urlopen(req) as r:return json.load(r)
+ def test_workflow(self):
+  self.assertEqual(self.call('/api/state')['samples'],[])
+  rows=[{'text':'Vào nhóm cá cược kiếm tiền','source':'test','synthetic':True}]
+  self.assertEqual(self.call('/api/import',{'rows':rows})['added'],1)
+  self.assertEqual(self.call('/api/import',{'rows':rows})['duplicates'],1)
+  state=self.call('/api/state');sample=state['samples'][0];labels={k:None for k in state['categories']};labels['co_bac']=1
+  review=dict(sample_id=sample['id'],base_revision=0,decision='VIOLATION',labels=labels,intent='Mời gọi',evidence='Vào nhóm',reason='Mời tham gia',reviewer='test')
+  self.call('/api/review',review)
+  with self.assertRaises(HTTPError):self.call('/api/review',review)
+  data=[json.loads(x) for x in (self.root/'exports/training_data.jsonl').read_text().splitlines()];self.assertEqual(data[0]['labels']['spam'],None);self.assertEqual(data[0]['label_mask']['spam'],0)
+  rule=dict(name='Luật thử',category='co_bac',kind='combined',config={'topic':['cá cược'],'behavior':['vào nhóm'],'context':['không nên']},tests=[{'text':rows[0]['text'],'expected':'MATCH'},{'text':'Không nên vào nhóm cá cược','expected':'CONTEXT_REVIEW'},{'text':'Vào nhóm học','expected':'NO_MATCH'}],status='draft',reviewer='test',reason='Chỉ để kiểm tra',source_sample_id=sample['id'])
+  d=self.call('/api/rule',rule);self.assertEqual(json.loads((self.root/'exports/blacklist.json').read_text())['rules'],[])
+  rule.update(id=d['id'],version=d['version'],status='active');d=self.call('/api/rule',rule)
+  out=json.loads((self.root/'exports/blacklist.json').read_text());self.assertEqual(len(out['rules']),1)
+  probe=self.call('/api/test',{'rule':rule,'text':'Không nên vào nhóm cá cược'});self.assertEqual(probe['probe']['result'],'CONTEXT_REVIEW')
+  rule.update(version=d['version'],status='disabled');self.call('/api/rule',rule)
+  self.assertEqual(json.loads((self.root/'exports/blacklist.json').read_text())['rules'],[])
+  self.assertEqual(len(self.call('/api/history')['rules']),3)
+  import sqlite3
+  restored=sqlite3.connect(':memory:');restored.executescript((self.root/'exports/backup.sql').read_text());self.assertEqual(restored.execute('select count(*) from reviews').fetchone()[0],1);restored.close()
+  with self.assertRaises(HTTPError):self.call('/api/import',{'rows':rows},token=False)
+  for path in ['/', '/app.js','/style.css']:
+   with urlopen(self.base+path) as r:self.assertEqual(r.status,200)
+
+if __name__=='__main__':unittest.main(verbosity=2)
