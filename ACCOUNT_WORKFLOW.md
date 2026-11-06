@@ -4,7 +4,7 @@
 
 1. Mở web. Tài khoản admin là `STUDIO_USERNAME` (mặc định `admin`); mã đăng nhập là `STUDIO_PASSWORD` hiện có trong Environment trên Render. Đây là mã riêng của admin, không dùng làm mã chung cho nhóm.
 2. Vào Giám sát & chia việc → Tạo tài khoản thành viên. Điền tài khoản (3–40 chữ thường/số/`_.-`) và tên hiển thị. App sinh mã riêng, chỉ hiển thị lần tạo/cấp mã thành công. Gửi riêng **tài khoản + mã** cho đúng người; app không tự nhắn cho thành viên.
-3. Thêm/import dữ liệu tại Quản lý bình luận. Chọn người nhận việc, nhập số câu tối đa/người (0 là chia hết), xem trước rồi xác nhận. Mỗi bình luận chỉ thuộc một người tại một thời điểm. Những câu đã giao hoặc đang được giữ không bị chia chồng.
+3. Thêm/import dữ liệu tại Quản lý bình luận. Với Parquet, chọn một file, bấm Xem trước để tải và chọn cột bình luận/phạm vi dòng rồi xác nhận nhập. Chọn người nhận việc, nhập số câu tối đa/người (0 là chia hết), xem trước rồi xác nhận. Mỗi bình luận chỉ thuộc một người tại một thời điểm. Những câu đã giao hoặc đang được giữ không bị chia chồng.
 4. Thành viên đăng nhập, thấy phần việc riêng và số bình luận còn lại, nhận câu tiếp theo, lưu liên tục. Có thể chọn gửi thêm nháp blacklist khi lưu câu vi phạm. Thành viên không có quyền import, xem kho của người khác, xuất SQL hoặc bật luật.
 5. Admin xem tiến độ/lịch sử, mở từng lượt để kiểm tra. Có nút Nhãn đạt hoặc Trả lại để sửa; khi trả lại cần ghi lý do. Câu quay về hàng đợi của thành viên, lịch sử nhãn cũ được giữ.
 
@@ -17,6 +17,12 @@
 - Thu hồi chưa làm: thu hồi phần pending không có lượt giữ còn hạn, giữ các câu đã xong. Nếu câu cần sửa đã có nhãn thì quay về kho với cờ cần gán lại.
 - Bình luận: admin có thể thêm, sửa, xóa và khôi phục. Xóa đưa vào lưu trữ, không hủy nhãn/lịch sử. Đổi nội dung một mẫu đã có nhãn tạo mẫu thay thế; nhãn cũ không tự áp vào nội dung mới. Sửa khi có người đang xử lý bị chặn để tránh mất thao tác.
 - Blacklist: thành viên gửi nháp từ câu vi phạm thuộc phần mình; admin xem, sửa, kiểm tra các ví dụ và bật/tắt luật.
+
+## Thêm nhầm và quay lại trạng thái trước
+
+Sau khi nhập file hoặc thêm mẫu, dùng **Hoàn tác đợt vừa thêm**. Trong hộp nhập file cũng có nút hoàn tác ngay khi hoàn tất. Muốn xem/sửa đúng những câu vừa thêm, bấm **Xem / sửa dữ liệu đợt này**.
+
+Ở Quản lý bình luận → Lịch sử nhập, mỗi đợt có Xem dữ liệu, Hoàn tác hoặc Khôi phục. Chỉ các bình luận mới của đợt bị ẩn khi hoàn tác; các câu trùng đã tồn tại trước đó và lịch sử gán nhãn được giữ. Khôi phục không tự đưa lại những câu đã xóa riêng trước khi hoàn tác. Nếu có người đang xử lý hoặc luật đang bật liên quan, app sẽ chặn và nêu lý do để xử lý trước.
 
 ## Đọc các số liệu giám sát
 

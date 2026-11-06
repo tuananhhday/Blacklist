@@ -1,4 +1,4 @@
-"""Local manual annotation studio. Python 3.10+, standard library only."""
+"""Annotation workspace with SQLite, account permissions and PyArrow Parquet import."""
 import base64, hmac
 import csv, hashlib, io, json, os, re, sqlite3, unicodedata, uuid
 from datetime import datetime, timezone
@@ -10,6 +10,8 @@ import collaboration as work
 import accounts as auth
 import administration as adminwork
 from git_backup import GitBackup
+import parquet_import
+import import_history
 
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('STUDIO_DATA',str(ROOT/'data')))
@@ -20,6 +22,7 @@ PASSWORD=os.environ.get('STUDIO_PASSWORD','')
 USERNAME=os.environ.get('STUDIO_USERNAME','admin').strip().lower()
 MUTATION_LOCK=threading.RLock()
 BACKUP=GitBackup(DATA)
+PARQUET=parquet_import.ParquetUploads()
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def dumps(v): return json.dumps(v,ensure_ascii=False,allow_nan=False)
@@ -34,6 +37,7 @@ def init():
   c.executescript((ROOT/'sql/schema.sql').read_text(encoding='utf8'))
   c.executescript(work.SCHEMA)
   auth.migrate(c,USERNAME,PASSWORD,now())
+  c.executescript(import_history.SCHEMA)
   c.execute("INSERT OR IGNORE INTO workspace_meta VALUES('database_id',?)",(uuid.uuid4().hex,))
   c.executemany('INSERT OR IGNORE INTO categories VALUES(?,?)',CATEGORIES.items())
 
@@ -177,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   parsed=urlsplit(self.path);path=parsed.path;query=parse_qs(parsed.query)
   if path=='/health':return self.reply({'status':'ok'})
-  public_files={'/':'index.html','/app.js':'app.js','/admin.js':'admin.js','/style.css':'style.css'}
+  public_files={'/':'index.html','/app.js':'app.js','/admin.js':'admin.js','/parquet.js':'parquet.js','/style.css':'style.css'}
   if path in public_files:
    filename=public_files[path];ct='text/html' if path=='/' else 'text/css' if path.endswith('.css') else 'text/javascript'
    return self.reply((ROOT/'static'/filename).read_text(encoding='utf8'),ctype=ct+'; charset=utf-8')
@@ -189,6 +193,8 @@ class Handler(BaseHTTPRequestHandler):
    elif path=='/api/session':self.reply({'token':self.user['csrf'],'user':auth.public(self.user)})
    elif path=='/api/admin/overview':
     with connect() as c:self.reply(adminwork.overview(c))
+   elif path=='/api/admin/imports':
+    with connect() as c:self.reply(import_history.list_batches(c,query.get('page',['0'])[0]))
    elif path=='/api/admin/samples':
     with connect() as c:self.reply(adminwork.sample_list(c,query))
    elif path=='/api/admin/reviews':
@@ -212,6 +218,16 @@ class Handler(BaseHTTPRequestHandler):
  def handle_post(self):
   try:
    path=urlsplit(self.path).path
+   if path=='/api/parquet/chunk':
+    if not self.authorized():return
+    auth.admin(self.user)
+    require(hmac.compare_digest(self.headers.get('X-Studio-Token',''),self.user['csrf']),'Phiên hết hạn. Tải lại trang.')
+    origin=self.headers.get('Origin');require(not origin or urlsplit(origin).netloc==self.headers.get('Host'),'Nguồn yêu cầu không hợp lệ.')
+    require(self.headers.get('Content-Type','').split(';')[0]=='application/octet-stream','Khối Parquet cần application/octet-stream.')
+    n=int(self.headers.get('Content-Length','0'));require(0<n<=parquet_import.CHUNK_BYTES,'Khối tải lên tối đa 1 MiB.')
+    query=parse_qs(urlsplit(self.path).query);key=query.get('upload_id',[''])[0];offset=int(query.get('offset',['-1'])[0])
+    PARQUET.get(key,self.user['id']);data=self.rfile.read(n);require(len(data)==n,'Khối tải lên chưa hoàn tất.')
+    return self.reply(PARQUET.append(key,self.user['id'],offset,data))
    require(self.headers.get('Content-Type','').split(';')[0]=='application/json','Yêu cầu cần Content-Type application/json.')
    origin=self.headers.get('Origin')
    require(not origin or urlsplit(origin).netloc==self.headers.get('Host'),'Nguồn yêu cầu không hợp lệ.')
@@ -223,7 +239,8 @@ class Handler(BaseHTTPRequestHandler):
     self.cookie(logged.pop('cookie'));return self.reply(logged)
    if not self.authorized():return
    require(hmac.compare_digest(self.headers.get('X-Studio-Token',''),self.user['csrf']),'Phiên hết hạn. Tải lại trang.')
-   if path.startswith('/api/admin/') or path in ['/api/import','/api/blacklist/import','/api/backup/sync']:auth.admin(self.user)
+   if path.startswith(('/api/admin/','/api/parquet/')) or path in ['/api/import','/api/blacklist/import','/api/backup/sync']:auth.admin(self.user)
+   if path.startswith('/api/parquet/'):return self.reply(PARQUET.action(path,self.user['id'],o))
    raw_client=o.get('client_id','')
    require(isinstance(raw_client,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',raw_client)),'Thiếu mã phiên làm việc.')
    o['client_id']=hashlib.sha256((str(self.user['id'])+':'+raw_client).encode()).hexdigest()
@@ -249,6 +266,7 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/admin/users':result=auth.create_member(c,o,now());changed=True
     elif path in ['/api/admin/users/rotate','/api/admin/users/toggle','/api/admin/users/reclaim','/api/admin/users/edit','/api/admin/users/delete','/api/admin/users/restore']:result=adminwork.manage_user(c,path,o,self.user,now());changed=True
     elif path in ['/api/admin/samples/edit','/api/admin/samples/delete','/api/admin/samples/restore']:result=adminwork.edit_sample(c,path,o,self.user,now());changed=True
+    elif path in ['/api/admin/imports/undo','/api/admin/imports/restore']:result=import_history.change(c,path.rsplit('/',1)[-1],o,now());changed=True
     elif path=='/api/admin/assign/preview':result=adminwork.assignment_plan(c,o)
     elif path=='/api/admin/assign':result=adminwork.apply_plan(c,o,self.user,now());changed=True
     elif path=='/api/admin/settings':
@@ -261,13 +279,16 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/backup/sync':result={'requested':True}
     elif path=='/api/blacklist/import':result=import_blacklist(c,o)
     elif path=='/api/import':
-     rows=o.get('rows',[]);require(isinstance(rows,list) and 0<len(rows)<=1000,'Mỗi lần nhập 1–1000 mẫu');added=0
+     rows=o.get('rows',[]);require(isinstance(rows,list) and 0<len(rows)<=1000,'Mỗi lần nhập 1–1000 mẫu');added=0;inserted=[]
+     batch_id=import_history.begin(c,o,self.user,now())
      for row in rows:
       text=field(row,'text',20000,True);context=field(row,'context');source=field(row,'source',500,True);synthetic=row.get('synthetic',True)
       require(isinstance(synthetic,bool),'synthetic cần true/false')
       fp=hashlib.sha256((norm(text)+'\x00'+norm(context)).encode()).hexdigest()
       cur=c.execute('INSERT OR IGNORE INTO samples(text,context,source,synthetic,fingerprint,created_at) VALUES(?,?,?,?,?,?)',(text,context,source,int(synthetic),fp,now()));added+=cur.rowcount
-     result={'added':added,'duplicates':len(rows)-added}
+      if cur.rowcount:inserted.append(cur.lastrowid)
+     import_history.finish(c,batch_id,inserted,len(rows),now())
+     result={'added':added,'duplicates':len(rows)-added,'import_batch_id':batch_id}
     elif path=='/api/review':
      sid=o.get('sample_id');sample=c.execute('SELECT * FROM samples WHERE id=?',(sid,)).fetchone();require(sample is not None,'Không có mẫu')
      work.check_claim(c,sid,o)
@@ -332,6 +353,8 @@ class Handler(BaseHTTPRequestHandler):
     BACKUP.sync(connect,force=path=='/api/backup/sync')
     with connect() as c:result['backup']=BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0]))
    self.reply(result)
+  except parquet_import.UploadExpired as e:self.reply({'error':str(e),'upload_expired':True},410)
+  except parquet_import.UploadConflict as e:self.reply({'error':str(e)},409)
   except auth.Forbidden as e:self.reply({'error':str(e)},403)
   except auth.RateLimited as e:self.reply({'error':str(e)},429)
   except work.Conflict as e:self.reply({'error':str(e),'conflict':True},409)

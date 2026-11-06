@@ -1,1 +1,2 @@
-# Python standard library only; no external dependencies.
+# Native Parquet reader (Snappy, Zstandard, gzip); all other code uses Python stdlib.
+pyarrow==24.0.0

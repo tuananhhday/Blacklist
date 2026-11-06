@@ -140,6 +140,8 @@ def audit_review(c,o,actor,stamp):
 def sample_list(c,query):
  archived=query.get('archived',['0'])[0]=='1';q=query.get('q',[''])[0][:200];page=max(0,int(query.get('page',['0'])[0]));args=['%'+q+'%']
  where='s.archived_at IS '+('NOT NULL' if archived else 'NULL')+' AND s.text LIKE ?'
+ batch=query.get('batch_id',[''])[0]
+ if batch:where+=' AND EXISTS(SELECT 1 FROM import_batch_samples l WHERE l.sample_id=s.id AND l.batch_id=?)';args.append(batch)
  total=c.execute('SELECT COUNT(*) FROM samples s WHERE '+where,args).fetchone()[0]
  rows=[dict(r) for r in c.execute("SELECT s.*,u.display_name AS assigned_name,(SELECT COUNT(*) FROM reviews r WHERE r.sample_id=s.id) AS review_count FROM samples s LEFT JOIN task_assignments a ON a.sample_id=s.id LEFT JOIN auth_users u ON u.id=a.user_id WHERE "+where+' ORDER BY s.id DESC LIMIT 40 OFFSET ?',args+[page*40])]
  return {'samples':rows,'total':total,'page':page,'page_size':40}
@@ -165,6 +167,7 @@ def edit_sample(c,path,o,actor,stamp):
  if changed_text and reviewed:
   new_id=c.execute('INSERT INTO samples(text,context,source,synthetic,fingerprint,created_at) VALUES(?,?,?,?,?,?)',(text.strip(),context.strip(),source.strip(),int(synthetic),fp,stamp)).lastrowid
   c.execute('UPDATE samples SET archived_at=?,replacement_sample_id=? WHERE id=?',(stamp,new_id,sid))
+  for link in c.execute('SELECT batch_id FROM import_batch_samples WHERE sample_id=?',(sid,)).fetchall():c.execute('INSERT OR IGNORE INTO import_batch_samples(batch_id,sample_id) VALUES(?,?)',(link[0],new_id))
   assigned=c.execute('SELECT a.* FROM task_assignments a JOIN auth_users u ON u.id=a.user_id WHERE a.sample_id=? AND u.active=1 AND u.deleted_at IS NULL',(sid,)).fetchone()
   if assigned:c.execute("INSERT INTO task_assignments VALUES(?,?,?,?,'pending')",(new_id,assigned['user_id'],actor['id'],stamp))
   return {'updated':True,'replacement_sample_id':new_id,'message':'Đã tạo mẫu thay thế; giữ nguyên nhãn và lịch sử bản cũ.'}
