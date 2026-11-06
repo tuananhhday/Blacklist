@@ -11,7 +11,7 @@ vm.runInContext(`(async()=>{
  elements.textColumn.value='comment';previewFiles=[{name:'a.csv',size:100,text:async()=> 'comment,source,synthetic\\n"Xin chào, bạn",dataset,false\\n'}];await previewSamples();assert.equal(previewRows[0].text,'Xin chào, bạn');assert.equal(previewRows[0].synthetic,false);
  elements.textColumn.value='';previewFiles=[{name:'b.txt',size:100,text:async()=> 'Câu thứ nhất\\nCâu thứ hai\\n'}];await previewSamples();assert.equal(previewRows.length,2);assert.equal(previewRows[1].source,'b.txt');
  previewFiles=[{name:'c.json',size:100,text:async()=> JSON.stringify({comments:[{body:'Nội dung thực',synthetic:false}]})}];await previewSamples();assert.equal(previewRows[0].text,'Nội dung thực');
- state={database_id:'db1',samples:[{id:1,fingerprint:'fp'}],categories:{a:'Nhóm A',b:'Nhóm B'}};selected=1;selectedRevision=2;
+ currentUser={id:1,display_name:'Test',role:'member'};state={database_id:'db1',samples:[{id:1,fingerprint:'fp'}],categories:{a:'Nhóm A',b:'Nhóm B'}};selected=1;selectedRevision=2;
  for(const code of ['a','b']){const e=new Element();e.dataset.label=code;e.value='';labelSelects.push(e)}
  for(const id of ['decision','intent','reason','evidence','reviewSummary','saveState'])$(id);elements.decision.value='';elements.intent.value='';elements.reason.value='Ghi chú đang gõ';elements.evidence.value='';
  setLabel('a','1',new Element());assert.equal(readLabels().a,1);assert.equal(readLabels().b,null);const stored=JSON.parse(localStorage.getItem(draftKey()));assert.equal(stored.base_revision,2);assert.equal(stored.reason,'Ghi chú đang gõ');assert.equal(stored.fingerprint,'fp');

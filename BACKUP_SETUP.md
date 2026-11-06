@@ -38,4 +38,4 @@ Không hệ thống nào có thể đẩy dữ liệu mới lên Git khi server 
 
 Khi có dữ liệu SQLite cũ tại local nhưng Git có kho khác hoặc phiên bản mới hơn, app dừng để tránh ghi đè. Giữ cả hai bản để xử lý thủ công. Không chạy đồng thời hai bản service cùng ghi vào một repo backup.
 
-Các tên người gán nhãn là tự khai, phiên giữ mẫu phân biệt theo từng trình duyệt/tab. Web vẫn dùng mật khẩu chung; đây chưa phải hệ thống tài khoản và phân quyền từng người.
+Tài khoản và mã riêng do admin cấp được backup cùng database (mã chỉ lưu dạng hash có salt). Cookie session và bộ đếm đăng nhập sai được bỏ khỏi snapshot; mọi người đăng nhập lại sau khi khởi động lại. Mã admin lấy từ STUDIO_PASSWORD, không chia sẻ mã đó với thành viên.

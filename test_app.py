@@ -7,20 +7,11 @@ from urllib.error import HTTPError
 class Workflow(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  cls.temp=tempfile.TemporaryDirectory();cls.root=Path(cls.temp.name);cls.base='http://127.0.0.1:18765'
-  env=dict(os.environ,STUDIO_DATA=str(cls.root/'data'),STUDIO_EXPORTS=str(cls.root/'exports'),PORT='18765')
-  cls.process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('app.py'))],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-  for _ in range(60):
-   try:
-    with urlopen(cls.base+'/api/session') as r:cls.token=json.load(r)['token']
-    break
-   except OSError:time.sleep(.1)
-  else:raise RuntimeError('Server failed to start')
+  from http_test_support import Server,Client
+  cls.server=Server(18765);cls.root=cls.server.root;cls.base=cls.server.base;cls.client=Client(cls.base)
  @classmethod
- def tearDownClass(cls):cls.process.terminate();cls.process.wait(timeout=5);cls.temp.cleanup()
- def call(self,path,data=None,token=True):
-  req=Request(self.base+path,data=json.dumps(dict(data,client_id='a'*32)).encode() if data is not None else None,headers={'Content-Type':'application/json',**({'X-Studio-Token':self.token} if token else {})})
-  with urlopen(req) as r:return json.load(r)
+ def tearDownClass(cls):cls.server.close()
+ def call(self,path,data=None,token=True):return self.client.call(path,data,csrf=token)
  def test_workflow(self):
   self.assertEqual(self.call('/api/state')['samples'],[])
   rows=[{'text':'Vào nhóm cá cược kiếm tiền','source':'test','synthetic':True}]

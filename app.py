@@ -4,9 +4,11 @@ import csv, hashlib, io, json, os, re, sqlite3, unicodedata, uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit,parse_qs
 import threading, time
 import collaboration as work
+import accounts as auth
+import administration as adminwork
 from git_backup import GitBackup
 
 ROOT=Path(__file__).resolve().parent
@@ -15,7 +17,7 @@ EXPORTS=Path(os.environ.get('STUDIO_EXPORTS',str(ROOT/'exports')))
 CATEGORIES=dict(zip(['co_bac','lua_dao','spam','thu_ghet_xuc_pham','khieu_dam_bao_luc','hang_cam','tin_gia','an_ninh_chinh_tri','hai_tre_em'],['Cờ bạc','Lừa đảo','Spam','Thù ghét, xúc phạm','Khiêu dâm, bạo lực','Hàng cấm','Tin giả','An ninh, chính trị','Gây hại trẻ em']))
 TOKEN=uuid.uuid4().hex
 PASSWORD=os.environ.get('STUDIO_PASSWORD','')
-USERNAME=os.environ.get('STUDIO_USERNAME','admin')
+USERNAME=os.environ.get('STUDIO_USERNAME','admin').strip().lower()
 MUTATION_LOCK=threading.RLock()
 BACKUP=GitBackup(DATA)
 
@@ -31,6 +33,7 @@ def init():
   c.execute('PRAGMA journal_mode=WAL')
   c.executescript((ROOT/'sql/schema.sql').read_text(encoding='utf8'))
   c.executescript(work.SCHEMA)
+  auth.migrate(c,USERNAME,PASSWORD,now())
   c.execute("INSERT OR IGNORE INTO workspace_meta VALUES('database_id',?)",(uuid.uuid4().hex,))
   c.executemany('INSERT OR IGNORE INTO categories VALUES(?,?)',CATEGORIES.items())
 
@@ -94,20 +97,31 @@ def validate_rule(o):
   require(all(t['actual']==t['expected'] for t in results),'Có câu kiểm tra chưa đạt')
  return rule,results
 
-def state(c):
+def state(c,user=None):
  if not c.in_transaction:c.execute('BEGIN')
  samples=[]
- for r in c.execute('SELECT * FROM samples ORDER BY id DESC'):
+ query='SELECT s.* FROM samples s';args=[]
+ if user and user['role']=='member':query+=' JOIN task_assignments a ON a.sample_id=s.id WHERE s.archived_at IS NULL AND a.user_id=?';args=[user['id']]
+ if not user or user['role']=='admin':query+=' WHERE s.archived_at IS NULL'
+ for r in c.execute(query+' ORDER BY s.id DESC',args):
   s=dict(r);rr=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(s['id'],)).fetchone()
   s['review']=dict(rr) if rr else None
   if rr:s['review']['labels']=json.loads(rr['labels_json'])
+  assignment=c.execute('SELECT * FROM task_assignments WHERE sample_id=?',(s['id'],)).fetchone()
+  s['assignment']=dict(assignment) if assignment else None
+  s['work_pending']=assignment['state']=='pending' if assignment else bool(s['needs_review']) or not bool(rr)
+  audit=c.execute('SELECT a.* FROM review_audits a JOIN reviews r ON r.id=a.review_id WHERE r.sample_id=? ORDER BY r.revision DESC LIMIT 1',(s['id'],)).fetchone()
+  s['audit_note']=dict(audit) if audit else None
   samples.append(s)
  rules=[]
- for r in c.execute('SELECT * FROM rules ORDER BY id DESC'):
+ rulequery='SELECT * FROM rules'+(' WHERE created_by_user_id=?' if user and user['role']=='member' else '')
+ for r in c.execute(rulequery+' ORDER BY id DESC',args):
   x=dict(r);x['config']=json.loads(x.pop('config_json'));x['tests']=json.loads(x.pop('tests_json'));rules.append(x)
  claims=[dict(r) for r in c.execute('SELECT sample_id,reviewer,expires_at FROM work_claims WHERE expires_at>?',(time.time(),))]
+ if user and user['role']=='member':
+  allowed={s['id'] for s in samples};claims=[r for r in claims if r['sample_id'] in allowed]
  meta=dict(c.execute('SELECT key,value FROM workspace_meta'))
- return {'categories':CATEGORIES,'samples':samples,'rules':rules,'claims':claims,'database_id':meta['database_id'],'backup':BACKUP.status(int(meta['version']))}
+ return {'categories':CATEGORIES,'samples':samples,'rules':rules,'claims':claims,'database_id':meta['database_id'],'backup':BACKUP.status(int(meta['version'])) if not user or user['role']=='admin' else {'version':int(meta['version']),'synced_version':BACKUP.last_version,'configured':BACKUP.configured,'synced':BACKUP.status(int(meta['version']))['synced'],'message':'Liên hệ admin nếu backup chưa đồng bộ.'}}
 
 def atomic(path,text):
  tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(text,encoding='utf8');tmp.replace(path)
@@ -146,26 +160,41 @@ def import_blacklist(c,o):
 
 class Handler(BaseHTTPRequestHandler):
  def setup(self):
-  super().setup();self.connection.settimeout(20)
+  super().setup();self.connection.settimeout(20);self.response_cookie=None;self.user=None
  def authorized(self):
-  if not PASSWORD:return True
-  expected='Basic '+base64.b64encode((USERNAME+':'+PASSWORD).encode()).decode()
-  if hmac.compare_digest(self.headers.get('Authorization',''),expected):return True
-  self.send_response(401);self.send_header('WWW-Authenticate','Basic realm="Blacklist Studio", charset="UTF-8"');self.send_header('Content-Length','0');self.end_headers();return False
-
+  with connect() as c:self.user=auth.session(c,self.headers.get('Cookie'))
+  if not self.user:self.reply({'error':'Hãy đăng nhập để vào không gian làm việc.'},401);return False
+  return True
+ def cookie(self,value,expire=False):
+  secure='; Secure' if os.environ.get('RENDER') or self.headers.get('X-Forwarded-Proto')=='https' else ''
+  self.response_cookie='studio_session='+value+'; Path=/; HttpOnly; SameSite=Lax; Max-Age='+('0' if expire else str(auth.SESSION_SECONDS))+secure
  def reply(self,obj,status=200,ctype='application/json; charset=utf-8',filename=None):
   data=(dumps(obj) if ctype.startswith('application/json') else obj).encode('utf8')
   self.send_response(status);self.send_header('Content-Type',ctype);self.send_header('Content-Length',str(len(data)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
+  if self.response_cookie:self.send_header('Set-Cookie',self.response_cookie)
   if filename:self.send_header('Content-Disposition',f'attachment; filename="{filename}"')
   self.end_headers();self.wfile.write(data)
  def do_GET(self):
-  path=urlsplit(self.path).path
+  parsed=urlsplit(self.path);path=parsed.path;query=parse_qs(parsed.query)
   if path=='/health':return self.reply({'status':'ok'})
+  public_files={'/':'index.html','/app.js':'app.js','/admin.js':'admin.js','/style.css':'style.css'}
+  if path in public_files:
+   filename=public_files[path];ct='text/html' if path=='/' else 'text/css' if path.endswith('.css') else 'text/javascript'
+   return self.reply((ROOT/'static'/filename).read_text(encoding='utf8'),ctype=ct+'; charset=utf-8')
   if not self.authorized():return
   try:
+   if path.startswith('/api/admin/') or path in ['/api/history','/api/backup/status'] or path.startswith('/export/'):auth.admin(self.user)
    if path=='/api/state':
-    with connect() as c:self.reply(state(c))
-   elif path=='/api/session':self.reply({'token':TOKEN})
+    with connect() as c:self.reply(state(c,self.user))
+   elif path=='/api/session':self.reply({'token':self.user['csrf'],'user':auth.public(self.user)})
+   elif path=='/api/admin/overview':
+    with connect() as c:self.reply(adminwork.overview(c))
+   elif path=='/api/admin/samples':
+    with connect() as c:self.reply(adminwork.sample_list(c,query))
+   elif path=='/api/admin/reviews':
+    with connect() as c:self.reply(adminwork.review_list(c,query))
+   elif path=='/api/admin/review':
+    with connect() as c:self.reply(adminwork.review_detail(c,int(query.get('id',['0'])[0])))
    elif path=='/api/backup/status':
     with connect() as c:self.reply(BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0])))
    elif path=='/api/history':
@@ -174,41 +203,63 @@ class Handler(BaseHTTPRequestHandler):
     filename=path.rsplit('/',1)[-1];require(filename in ['blacklist.json','blacklist_drafts.json','training_data.jsonl','backup.sql'],'File không hợp lệ')
     with MUTATION_LOCK,connect() as c:export_all(c)
     self.reply((EXPORTS/filename).read_text(encoding='utf8'),ctype='text/plain; charset=utf-8',filename=filename)
-   elif path in ['/','/app.js','/style.css']:
-    file={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}[path]
-    ct={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}[path]
-    self.reply((ROOT/'static'/file).read_text(encoding='utf8'),ctype=ct)
    else:self.reply({'error':'Không tìm thấy'},404)
+  except auth.Forbidden as e:self.reply({'error':str(e)},403)
   except ValueError as e:self.reply({'error':str(e)},400)
  def do_POST(self):
+  self.received_at=time.time()
   with MUTATION_LOCK:self.handle_post()
  def handle_post(self):
-  if not self.authorized():return
   try:
-   require(self.headers.get('X-Studio-Token')==TOKEN,'Phiên hết hạn. Tải lại trang.')
+   path=urlsplit(self.path).path
+   require(self.headers.get('Content-Type','').split(';')[0]=='application/json','Yêu cầu cần Content-Type application/json.')
+   origin=self.headers.get('Origin')
+   require(not origin or urlsplit(origin).netloc==self.headers.get('Host'),'Nguồn yêu cầu không hợp lệ.')
    n=int(self.headers.get('Content-Length','0'));require(0<n<=2_000_000,'Yêu cầu quá lớn hoặc rỗng')
-   o=json.loads(self.rfile.read(n));require(isinstance(o,dict),'Cần JSON object');path=urlsplit(self.path).path
+   o=json.loads(self.rfile.read(n));require(isinstance(o,dict),'Cần JSON object')
+   if path=='/api/auth/login':
+    with connect() as c:logged=auth.login(c,o,self.client_address[0])
+    if not logged:return self.reply({'error':'Tài khoản hoặc mã đăng nhập không đúng.'},401)
+    self.cookie(logged.pop('cookie'));return self.reply(logged)
+   if not self.authorized():return
+   require(hmac.compare_digest(self.headers.get('X-Studio-Token',''),self.user['csrf']),'Phiên hết hạn. Tải lại trang.')
+   if path.startswith('/api/admin/') or path in ['/api/import','/api/blacklist/import','/api/backup/sync']:auth.admin(self.user)
+   raw_client=o.get('client_id','')
+   require(isinstance(raw_client,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',raw_client)),'Thiếu mã phiên làm việc.')
+   o['client_id']=hashlib.sha256((str(self.user['id'])+':'+raw_client).encode()).hexdigest()
+   o['reviewer']=self.user['display_name'];o['_user']=auth.public(self.user);o['_received_at']=self.received_at
    result={};changed=False
    opid=o.get('operation_id');cached=None
    if opid is not None:require(isinstance(opid,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',opid)),'Mã thao tác không hợp lệ.')
-   request_hash=hashlib.sha256(dumps(o).encode()).hexdigest()
+   signature={k:v for k,v in o.items() if k not in ['_user','reviewer','_received_at']}
+   signature['_actor_id']=self.user['id']
+   request_hash=hashlib.sha256(dumps(signature).encode()).hexdigest()
    with connect() as c:
     c.execute('BEGIN IMMEDIATE')
-    if opid:
-     cached=c.execute('SELECT * FROM operations WHERE id=?',(opid,)).fetchone()
+    if opid:cached=c.execute('SELECT * FROM operations WHERE id=?',(opid,)).fetchone()
     if cached:
-     require(cached['kind']==path and cached['request_hash']==request_hash,'Mã thao tác đã dùng cho nội dung khác.')
+     require(cached['kind']==path and cached['request_hash']==request_hash,'Mã thao tác đã dùng cho nội dung hoặc tài khoản khác.')
      result=json.loads(cached['result_json'])
      if path=='/api/review':
       c.execute('DELETE FROM work_claims WHERE sample_id=? AND owner=?',(o.get('sample_id'),work.owner(o)))
+      c.execute('UPDATE annotation_attempts SET closed_at=? WHERE owner=? AND sample_id=? AND closed_at IS NULL',(time.time(),work.owner(o),o.get('sample_id')))
+    elif path=='/api/auth/logout':
+     c.execute('DELETE FROM auth_sessions WHERE token_hash=?',(self.user['token_hash'],))
+     c.execute('DELETE FROM work_claims WHERE owner=?',(work.owner(o),));self.cookie('',expire=True);result={'logged_out':True}
+    elif path=='/api/admin/users':result=auth.create_member(c,o,now());changed=True
+    elif path in ['/api/admin/users/rotate','/api/admin/users/toggle','/api/admin/users/reclaim','/api/admin/users/edit','/api/admin/users/delete','/api/admin/users/restore']:result=adminwork.manage_user(c,path,o,self.user,now());changed=True
+    elif path in ['/api/admin/samples/edit','/api/admin/samples/delete','/api/admin/samples/restore']:result=adminwork.edit_sample(c,path,o,self.user,now());changed=True
+    elif path=='/api/admin/assign/preview':result=adminwork.assignment_plan(c,o)
+    elif path=='/api/admin/assign':result=adminwork.apply_plan(c,o,self.user,now());changed=True
+    elif path=='/api/admin/settings':
+     seconds=o.get('fast_seconds');require(type(seconds) in [int,float] and 1<=seconds<=120,'Ngưỡng cần từ 1 đến 120 giây.')
+     c.execute("UPDATE workspace_meta SET value=? WHERE key='fast_seconds'",(str(seconds),));result={'updated':True};changed=True
+    elif path=='/api/admin/audit':result=adminwork.audit_review(c,o,self.user,now());changed=True
     elif path=='/api/work/claim':result=work.claim(c,o)
-    elif path=='/api/work/heartbeat':
-     work.check_claim(c,o.get('sample_id'),o);result={'held':True}
-    elif path=='/api/draft':
-     changed=work.save_draft(c,o,now());result={'draft_saved':True}
+    elif path=='/api/work/heartbeat':work.heartbeat(c,o);result={'held':True}
+    elif path=='/api/draft':changed=work.save_draft(c,o,now());result={'draft_saved':True}
     elif path=='/api/backup/sync':result={'requested':True}
-    elif path=='/api/blacklist/import':
-     result=import_blacklist(c,o)
+    elif path=='/api/blacklist/import':result=import_blacklist(c,o)
     elif path=='/api/import':
      rows=o.get('rows',[]);require(isinstance(rows,list) and 0<len(rows)<=1000,'Mỗi lần nhập 1–1000 mẫu');added=0
      for row in rows:
@@ -220,6 +271,8 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/review':
      sid=o.get('sample_id');sample=c.execute('SELECT * FROM samples WHERE id=?',(sid,)).fetchone();require(sample is not None,'Không có mẫu')
      work.check_claim(c,sid,o)
+     auth.sample_access(c,self.user,sid,claim=True)
+     timing=work.finish_timing(c,o)
      previous=c.execute('SELECT MAX(revision) FROM reviews WHERE sample_id=?',(sid,)).fetchone()[0] or 0
      require(o.get('base_revision',0)==previous,'Mẫu đã thay đổi ở cửa sổ khác. Tải lại trước khi lưu.')
      decision=field(o,'decision',30,True);require(decision in ['ALLOW','VIOLATION','UNSURE'],'Quyết định không hợp lệ')
@@ -229,39 +282,65 @@ class Handler(BaseHTTPRequestHandler):
      if decision=='ALLOW':require(1 not in labels.values() and 0 in labels.values(),'Hợp lệ cần ít nhất một nhóm đã kiểm tra Không')
      evidence=field(o,'evidence');require(not evidence or evidence in sample['text'],'Bằng chứng phải là đoạn có trong câu gốc')
      reviewer=field(o,'reviewer',100,True);reason=field(o,'reason',2000,True);intent=field(o,'intent',100)
-     c.execute('INSERT INTO reviews(sample_id,revision,decision,labels_json,intent,evidence,reason,reviewer,policy_version,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(sid,previous+1,decision,dumps(labels),intent,evidence,reason,reviewer,'demo-1',now()));result={'saved':True}
+     cursor=c.execute('INSERT INTO reviews(sample_id,revision,decision,labels_json,intent,evidence,reason,reviewer,policy_version,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(sid,previous+1,decision,dumps(labels),intent,evidence,reason,reviewer,'demo-1',now()));result={'saved':True,'review_id':cursor.lastrowid}
+     c.execute('UPDATE reviews SET user_id=?,attempt_id=?,elapsed_ms=?,active_ms=?,fast_flag=?,threshold_ms=? WHERE id=?',(self.user['id'],timing['attempt_id'],timing['elapsed_ms'],timing['active_ms'],timing['fast_flag'],timing['threshold_ms'],cursor.lastrowid))
+     c.execute('UPDATE samples SET needs_review=0 WHERE id=?',(sid,))
+     c.execute("UPDATE task_assignments SET state='done' WHERE sample_id=?",(sid,))
+     if o.get('propose_rule') is True and decision=='VIOLATION':
+      for category,value in labels.items():
+       if value==1 and not c.execute("SELECT 1 FROM rules WHERE source_sample_id=? AND category=? AND kind='exact'",(sid,category)).fetchone():
+        config=dumps({'pattern':sample['text']});tests=dumps([{'text':sample['text'],'expected':'MATCH'}])
+        rid=c.execute("INSERT INTO rules(name,category,kind,config_json,tests_json,status,version,source_sample_id,reviewer,reason,updated_at,created_by_user_id) VALUES(?,?,'exact',?,?,'draft',1,?,?,?,?,?)",('Từ bình luận #'+str(sid),category,config,tests,sid,reviewer,reason,now(),self.user['id'])).lastrowid
+        row=dict(c.execute('SELECT * FROM rules WHERE id=?',(rid,)).fetchone())
+        c.execute('INSERT INTO rule_history(rule_id,version,snapshot_json,created_at) VALUES(?,1,?,?)',(rid,dumps(row),now()))
      c.execute('DELETE FROM work_drafts WHERE owner=? AND sample_id=?',(work.owner(o),sid))
      c.execute('DELETE FROM work_claims WHERE sample_id=?',(sid,))
     elif path=='/api/rule':
+     if self.user['role']=='member':
+      source=o.get('source_sample_id');auth.sample_access(c,self.user,source)
+      if o.get('status')!='draft':raise auth.Forbidden('Thành viên chỉ được gửi blacklist ở trạng thái nháp để admin duyệt.')
+      latest_review=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(source,)).fetchone()
+      require(latest_review and latest_review['user_id']==self.user['id'] and latest_review['decision']=='VIOLATION','Cần nhãn Vi phạm mới nhất từ phần việc của bạn.')
+      require(json.loads(latest_review['labels_json']).get(o.get('category'))==1,'Nhóm blacklist phải là nhóm vi phạm đã gán cho câu này.')
+      if o.get('id'):
+       previous_rule=c.execute('SELECT * FROM rules WHERE id=?',(o['id'],)).fetchone()
+       if not previous_rule or previous_rule['created_by_user_id']!=self.user['id'] or previous_rule['status']!='draft':raise auth.Forbidden('Bạn chỉ sửa được blacklist nháp do mình tạo.')
      r,tests=validate_rule(o);rid=o.get('id');version=1
      if rid:
       old=c.execute('SELECT version FROM rules WHERE id=?',(rid,)).fetchone();require(old is not None,'Không có luật');require(o.get('version')==old[0],'Luật đã thay đổi. Tải lại.');version=old[0]+1
      args=(r['name'],r['category'],r['kind'],dumps(r['config']),dumps(r['tests']),r['status'],version,r['source_sample_id'],r['reviewer'],r['reason'],now())
      if rid:c.execute('UPDATE rules SET name=?,category=?,kind=?,config_json=?,tests_json=?,status=?,version=?,source_sample_id=?,reviewer=?,reason=?,updated_at=? WHERE id=?',args+(rid,))
      else:rid=c.execute('INSERT INTO rules(name,category,kind,config_json,tests_json,status,version,source_sample_id,reviewer,reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',args).lastrowid
+     if not o.get('id'):c.execute('UPDATE rules SET created_by_user_id=? WHERE id=?',(self.user['id'],rid))
      snapshot=dict(r,id=rid,version=version,action='REVIEW');c.execute('INSERT INTO rule_history(rule_id,version,snapshot_json,created_at) VALUES(?,?,?,?)',(rid,version,dumps(snapshot),now()));result={'id':rid,'version':version,'tests':tests}
     elif path=='/api/test':
      r,tests=validate_rule(dict(o['rule'],status='draft'));result={'tests':tests,'probe':evaluate(r,field(o,'text',20000))}
     else:raise ValueError('API không tồn tại')
     if not cached:
      changed=changed or path in ['/api/import','/api/review','/api/rule'] or path=='/api/blacklist/import' and not o.get('preview',True)
-     if opid and changed:c.execute('INSERT INTO operations VALUES(?,?,?,?,?)',(opid,path,request_hash,dumps(result),now()))
+     if opid and changed:
+      receipt={k:v for k,v in result.items() if k!='login_code'}
+      if 'login_code' in result:receipt['code_once']=True
+      c.execute('INSERT INTO operations VALUES(?,?,?,?,?)',(opid,path,request_hash,dumps(receipt),now()))
      if changed:c.execute("UPDATE workspace_meta SET value=CAST(value AS INTEGER)+1 WHERE key='version'")
    if path in ['/api/import','/api/review','/api/rule','/api/blacklist/import']:
     try:
      with connect() as c:export_all(c)
-    except OSError:result['warning']='Database đã lưu, nhưng xuất file lỗi. Kiểm tra quyền thư mục exports và bấm xuất lại.'
-   if path in ['/api/backup/sync','/api/import','/api/review','/api/rule'] or path=='/api/blacklist/import' and not o.get('preview',True):
+    except OSError:result['warning']='Database đã lưu, nhưng xuất file lỗi. Kiểm tra quyền thư mục exports.'
+   immediate=path in ['/api/backup/sync','/api/import','/api/review','/api/rule'] or path=='/api/blacklist/import' and not o.get('preview',True) or path.startswith('/api/admin/') and changed
+   if immediate:
     BACKUP.sync(connect,force=path=='/api/backup/sync')
     with connect() as c:result['backup']=BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0]))
    self.reply(result)
+  except auth.Forbidden as e:self.reply({'error':str(e)},403)
+  except auth.RateLimited as e:self.reply({'error':str(e)},429)
   except work.Conflict as e:self.reply({'error':str(e),'conflict':True},409)
   except (ValueError,TypeError,KeyError,sqlite3.IntegrityError) as e:self.reply({'error':str(e)},400)
   except Exception:
-   import traceback;traceback.print_exc();self.reply({'error':'Lỗi máy chủ; dữ liệu chưa lưu hoặc cần kiểm tra log.'},500)
+   import traceback;traceback.print_exc();self.reply({'error':'Lỗi máy chủ; nháp được giữ. Kiểm tra log trước khi thử lại.'},500)
 
 if __name__=='__main__':
- if os.environ.get('RENDER') and not PASSWORD:raise SystemExit('Set STUDIO_PASSWORD before deploying')
+ if not PASSWORD:raise SystemExit('Set STUDIO_PASSWORD before deploying')
  try:BACKUP.restore_if_missing()
  except Exception:raise SystemExit('Không thể khôi phục Git backup. Kiểm tra repo private, token và kết nối; server dừng để tránh ghi đè dữ liệu cũ.')
  init()

@@ -68,7 +68,10 @@ class GitBackup:
      with connect() as source,sqlite3.connect(dest) as copy:
       source.backup(copy);version=int(copy.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0])
       # Do not persist access leases. Drafts and operation receipts are retained.
-      copy.execute('DELETE FROM work_claims');copy.commit()
+      copy.execute('DELETE FROM work_claims')
+      for table in ['auth_sessions','login_limits']:
+       if copy.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():copy.execute('DELETE FROM '+table)
+      copy.commit()
      copy.close();source.close()
      if version==self.last_version and not force:
       self.error=None;return self.status(version)

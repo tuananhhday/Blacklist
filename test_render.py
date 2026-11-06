@@ -31,26 +31,21 @@ class ImportTests(unittest.TestCase):
 
 class AuthTests(unittest.TestCase):
  def test_protected_routes(self):
-  with tempfile.TemporaryDirectory() as d:
-   env=dict(os.environ,STUDIO_PASSWORD='test-only-password',STUDIO_DATA=d,STUDIO_EXPORTS=d+'/exports',PORT='18766',HOST='127.0.0.1')
-   proc=subprocess.Popen([sys.executable,'app.py'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-   try:
-    for _ in range(60):
-     try:
-      with urlopen('http://127.0.0.1:18766/health',timeout=1) as r:self.assertEqual(r.status,200)
-      break
-     except OSError:time.sleep(.1)
-    else:self.fail('Server did not start')
-    auth='Basic '+base64.b64encode(b'admin:test-only-password').decode()
-    for path in ['/','/api/state','/api/session','/export/backup.sql']:
-     with self.assertRaises(HTTPError) as ctx:urlopen('http://127.0.0.1:18766'+path)
-     self.assertEqual(ctx.exception.code,401)
-     with urlopen(Request('http://127.0.0.1:18766'+path,headers={'Authorization':auth})) as r:self.assertEqual(r.status,200)
-    with urlopen(Request('http://127.0.0.1:18766/api/session',headers={'Authorization':auth})) as r:token=json.load(r)['token']
-    body=json.dumps({'rules':[ImportTests.rule(self)],'preview':False,'reviewer':'An'}).encode()
-    with urlopen(Request('http://127.0.0.1:18766/api/blacklist/import',data=body,headers={'Authorization':auth,'X-Studio-Token':token,'Content-Type':'application/json'})) as r:self.assertEqual(json.load(r)['added'],1)
-    with self.assertRaises(HTTPError) as ctx:urlopen(Request('http://127.0.0.1:18766/api/blacklist/import',data=body,headers={'Authorization':auth,'Content-Type':'application/json'}))
-    self.assertEqual(ctx.exception.code,400)
-   finally:proc.terminate();proc.wait(timeout=5)
+  from http_test_support import Server,Client
+  server=Server(18766)
+  try:
+   with urlopen(server.base+'/') as r:self.assertEqual(r.status,200)
+   for path in ['/api/state','/api/session','/export/backup.sql']:
+    with self.assertRaises(HTTPError) as ctx:urlopen(server.base+path)
+    self.assertEqual(ctx.exception.code,401)
+   admin=Client(server.base)
+   self.assertEqual(admin.call('/api/session')['user']['role'],'admin')
+   self.assertEqual(admin.call('/api/blacklist/import',{'rules':[ImportTests.rule(self)],'preview':False})['added'],1)
+   with self.assertRaises(HTTPError) as ctx:admin.call('/api/backup/sync',{},csrf=False)
+   self.assertEqual(ctx.exception.code,400)
+   with self.assertRaises(HTTPError) as ctx:
+    urlopen(Request(server.base+'/api/state',headers={'Authorization':'Basic '+base64.b64encode(b'admin:test-only-password').decode()}))
+   self.assertEqual(ctx.exception.code,401)
+  finally:server.close()
 
 if __name__=='__main__':unittest.main()

@@ -3,7 +3,7 @@ services:
     name: blacklist-studio
     runtime: python
     plan: free
-    buildCommand: python -m compileall -q app.py collaboration.py git_backup.py
+    buildCommand: python -m compileall -q app.py accounts.py administration.py collaboration.py git_backup.py
     startCommand: python app.py
     healthCheckPath: /health
     envVars:
