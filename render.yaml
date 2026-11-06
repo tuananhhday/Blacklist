@@ -3,7 +3,7 @@ services:
     name: blacklist-studio
     runtime: python
     plan: free
-    buildCommand: python -m compileall -q app.py
+    buildCommand: python -m compileall -q app.py collaboration.py git_backup.py
     startCommand: python app.py
     healthCheckPath: /health
     envVars:
@@ -15,3 +15,9 @@ services:
         value: /tmp/blacklist-studio/database
       - key: STUDIO_EXPORTS
         value: /tmp/blacklist-studio/exports
+      - key: GITHUB_BACKUP_REPO
+        value: tuananhhday/backup-blacklist
+      - key: GITHUB_BACKUP_BRANCH
+        value: main
+      - key: GITHUB_BACKUP_TOKEN
+        sync: false

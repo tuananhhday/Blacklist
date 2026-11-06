@@ -19,7 +19,7 @@ class Workflow(unittest.TestCase):
  @classmethod
  def tearDownClass(cls):cls.process.terminate();cls.process.wait(timeout=5);cls.temp.cleanup()
  def call(self,path,data=None,token=True):
-  req=Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers={'Content-Type':'application/json',**({'X-Studio-Token':self.token} if token else {})})
+  req=Request(self.base+path,data=json.dumps(dict(data,client_id='a'*32)).encode() if data is not None else None,headers={'Content-Type':'application/json',**({'X-Studio-Token':self.token} if token else {})})
   with urlopen(req) as r:return json.load(r)
  def test_workflow(self):
   self.assertEqual(self.call('/api/state')['samples'],[])
@@ -27,9 +27,13 @@ class Workflow(unittest.TestCase):
   self.assertEqual(self.call('/api/import',{'rows':rows})['added'],1)
   self.assertEqual(self.call('/api/import',{'rows':rows})['duplicates'],1)
   state=self.call('/api/state');sample=state['samples'][0];labels={k:None for k in state['categories']};labels['co_bac']=1
-  review=dict(sample_id=sample['id'],base_revision=0,decision='VIOLATION',labels=labels,intent='Mời gọi',evidence='Vào nhóm',reason='Mời tham gia',reviewer='test')
+  review=dict(operation_id='c'*32,sample_id=sample['id'],base_revision=0,decision='VIOLATION',labels=labels,intent='Mời gọi',evidence='Vào nhóm',reason='Mời tham gia',reviewer='test')
+  self.call('/api/work/claim',{'sample_id':sample['id'],'reviewer':'test'})
   self.call('/api/review',review)
-  with self.assertRaises(HTTPError):self.call('/api/review',review)
+  self.call('/api/work/claim',{'sample_id':sample['id'],'reviewer':'test'})
+  self.assertTrue(self.call('/api/review',review)['saved'])
+  self.assertEqual(self.call('/api/state')['claims'],[])
+  with self.assertRaises(HTTPError):self.call('/api/review',dict(review,operation_id='d'*32))
   data=[json.loads(x) for x in (self.root/'exports/training_data.jsonl').read_text().splitlines()];self.assertEqual(data[0]['labels']['spam'],None);self.assertEqual(data[0]['label_mask']['spam'],0)
   rule=dict(name='Luật thử',category='co_bac',kind='combined',config={'topic':['cá cược'],'behavior':['vào nhóm'],'context':['không nên']},tests=[{'text':rows[0]['text'],'expected':'MATCH'},{'text':'Không nên vào nhóm cá cược','expected':'CONTEXT_REVIEW'},{'text':'Vào nhóm học','expected':'NO_MATCH'}],status='draft',reviewer='test',reason='Chỉ để kiểm tra',source_sample_id=sample['id'])
   d=self.call('/api/rule',rule);self.assertEqual(json.loads((self.root/'exports/blacklist.json').read_text())['rules'],[])

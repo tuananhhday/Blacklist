@@ -2,9 +2,12 @@
 import base64, hmac
 import csv, hashlib, io, json, os, re, sqlite3, unicodedata, uuid
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+import threading, time
+import collaboration as work
+from git_backup import GitBackup
 
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('STUDIO_DATA',str(ROOT/'data')))
@@ -13,17 +16,22 @@ CATEGORIES=dict(zip(['co_bac','lua_dao','spam','thu_ghet_xuc_pham','khieu_dam_ba
 TOKEN=uuid.uuid4().hex
 PASSWORD=os.environ.get('STUDIO_PASSWORD','')
 USERNAME=os.environ.get('STUDIO_USERNAME','admin')
+MUTATION_LOCK=threading.RLock()
+BACKUP=GitBackup(DATA)
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def dumps(v): return json.dumps(v,ensure_ascii=False,allow_nan=False)
 def norm(s): return re.sub(r'\s+',' ',unicodedata.normalize('NFC',s)).strip().casefold()
 def connect():
- c=sqlite3.connect(DATA/'studio.sqlite3');c.row_factory=sqlite3.Row;c.execute('PRAGMA foreign_keys=ON');return c
+ c=sqlite3.connect(DATA/'studio.sqlite3',timeout=30);c.row_factory=sqlite3.Row;c.execute('PRAGMA foreign_keys=ON');return c
 
 def init():
  DATA.mkdir(parents=True,exist_ok=True);EXPORTS.mkdir(parents=True,exist_ok=True)
  with connect() as c:
+  c.execute('PRAGMA journal_mode=WAL')
   c.executescript((ROOT/'sql/schema.sql').read_text(encoding='utf8'))
+  c.executescript(work.SCHEMA)
+  c.execute("INSERT OR IGNORE INTO workspace_meta VALUES('database_id',?)",(uuid.uuid4().hex,))
   c.executemany('INSERT OR IGNORE INTO categories VALUES(?,?)',CATEGORIES.items())
 
 def require(ok,msg):
@@ -87,6 +95,7 @@ def validate_rule(o):
  return rule,results
 
 def state(c):
+ if not c.in_transaction:c.execute('BEGIN')
  samples=[]
  for r in c.execute('SELECT * FROM samples ORDER BY id DESC'):
   s=dict(r);rr=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(s['id'],)).fetchone()
@@ -96,7 +105,9 @@ def state(c):
  rules=[]
  for r in c.execute('SELECT * FROM rules ORDER BY id DESC'):
   x=dict(r);x['config']=json.loads(x.pop('config_json'));x['tests']=json.loads(x.pop('tests_json'));rules.append(x)
- return {'categories':CATEGORIES,'samples':samples,'rules':rules}
+ claims=[dict(r) for r in c.execute('SELECT sample_id,reviewer,expires_at FROM work_claims WHERE expires_at>?',(time.time(),))]
+ meta=dict(c.execute('SELECT key,value FROM workspace_meta'))
+ return {'categories':CATEGORIES,'samples':samples,'rules':rules,'claims':claims,'database_id':meta['database_id'],'backup':BACKUP.status(int(meta['version']))}
 
 def atomic(path,text):
  tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(text,encoding='utf8');tmp.replace(path)
@@ -155,11 +166,13 @@ class Handler(BaseHTTPRequestHandler):
    if path=='/api/state':
     with connect() as c:self.reply(state(c))
    elif path=='/api/session':self.reply({'token':TOKEN})
+   elif path=='/api/backup/status':
+    with connect() as c:self.reply(BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0])))
    elif path=='/api/history':
     with connect() as c:self.reply({'reviews':[dict(r) for r in c.execute('SELECT * FROM reviews ORDER BY id DESC LIMIT 500')],'rules':[dict(r) for r in c.execute('SELECT * FROM rule_history ORDER BY id DESC LIMIT 500')]})
    elif path.startswith('/export/'):
     filename=path.rsplit('/',1)[-1];require(filename in ['blacklist.json','blacklist_drafts.json','training_data.jsonl','backup.sql'],'File không hợp lệ')
-    with connect() as c:export_all(c)
+    with MUTATION_LOCK,connect() as c:export_all(c)
     self.reply((EXPORTS/filename).read_text(encoding='utf8'),ctype='text/plain; charset=utf-8',filename=filename)
    elif path in ['/','/app.js','/style.css']:
     file={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}[path]
@@ -168,13 +181,33 @@ class Handler(BaseHTTPRequestHandler):
    else:self.reply({'error':'Không tìm thấy'},404)
   except ValueError as e:self.reply({'error':str(e)},400)
  def do_POST(self):
+  with MUTATION_LOCK:self.handle_post()
+ def handle_post(self):
   if not self.authorized():return
   try:
    require(self.headers.get('X-Studio-Token')==TOKEN,'Phiên hết hạn. Tải lại trang.')
    n=int(self.headers.get('Content-Length','0'));require(0<n<=2_000_000,'Yêu cầu quá lớn hoặc rỗng')
    o=json.loads(self.rfile.read(n));require(isinstance(o,dict),'Cần JSON object');path=urlsplit(self.path).path
+   result={};changed=False
+   opid=o.get('operation_id');cached=None
+   if opid is not None:require(isinstance(opid,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',opid)),'Mã thao tác không hợp lệ.')
+   request_hash=hashlib.sha256(dumps(o).encode()).hexdigest()
    with connect() as c:
-    if path=='/api/blacklist/import':
+    c.execute('BEGIN IMMEDIATE')
+    if opid:
+     cached=c.execute('SELECT * FROM operations WHERE id=?',(opid,)).fetchone()
+    if cached:
+     require(cached['kind']==path and cached['request_hash']==request_hash,'Mã thao tác đã dùng cho nội dung khác.')
+     result=json.loads(cached['result_json'])
+     if path=='/api/review':
+      c.execute('DELETE FROM work_claims WHERE sample_id=? AND owner=?',(o.get('sample_id'),work.owner(o)))
+    elif path=='/api/work/claim':result=work.claim(c,o)
+    elif path=='/api/work/heartbeat':
+     work.check_claim(c,o.get('sample_id'),o);result={'held':True}
+    elif path=='/api/draft':
+     changed=work.save_draft(c,o,now());result={'draft_saved':True}
+    elif path=='/api/backup/sync':result={'requested':True}
+    elif path=='/api/blacklist/import':
      result=import_blacklist(c,o)
     elif path=='/api/import':
      rows=o.get('rows',[]);require(isinstance(rows,list) and 0<len(rows)<=1000,'Mỗi lần nhập 1–1000 mẫu');added=0
@@ -186,6 +219,7 @@ class Handler(BaseHTTPRequestHandler):
      result={'added':added,'duplicates':len(rows)-added}
     elif path=='/api/review':
      sid=o.get('sample_id');sample=c.execute('SELECT * FROM samples WHERE id=?',(sid,)).fetchone();require(sample is not None,'Không có mẫu')
+     work.check_claim(c,sid,o)
      previous=c.execute('SELECT MAX(revision) FROM reviews WHERE sample_id=?',(sid,)).fetchone()[0] or 0
      require(o.get('base_revision',0)==previous,'Mẫu đã thay đổi ở cửa sổ khác. Tải lại trước khi lưu.')
      decision=field(o,'decision',30,True);require(decision in ['ALLOW','VIOLATION','UNSURE'],'Quyết định không hợp lệ')
@@ -196,6 +230,8 @@ class Handler(BaseHTTPRequestHandler):
      evidence=field(o,'evidence');require(not evidence or evidence in sample['text'],'Bằng chứng phải là đoạn có trong câu gốc')
      reviewer=field(o,'reviewer',100,True);reason=field(o,'reason',2000,True);intent=field(o,'intent',100)
      c.execute('INSERT INTO reviews(sample_id,revision,decision,labels_json,intent,evidence,reason,reviewer,policy_version,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(sid,previous+1,decision,dumps(labels),intent,evidence,reason,reviewer,'demo-1',now()));result={'saved':True}
+     c.execute('DELETE FROM work_drafts WHERE owner=? AND sample_id=?',(work.owner(o),sid))
+     c.execute('DELETE FROM work_claims WHERE sample_id=?',(sid,))
     elif path=='/api/rule':
      r,tests=validate_rule(o);rid=o.get('id');version=1
      if rid:
@@ -207,19 +243,35 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/test':
      r,tests=validate_rule(dict(o['rule'],status='draft'));result={'tests':tests,'probe':evaluate(r,field(o,'text',20000))}
     else:raise ValueError('API không tồn tại')
-   if path!='/api/test':
+    if not cached:
+     changed=changed or path in ['/api/import','/api/review','/api/rule'] or path=='/api/blacklist/import' and not o.get('preview',True)
+     if opid and changed:c.execute('INSERT INTO operations VALUES(?,?,?,?,?)',(opid,path,request_hash,dumps(result),now()))
+     if changed:c.execute("UPDATE workspace_meta SET value=CAST(value AS INTEGER)+1 WHERE key='version'")
+   if path in ['/api/import','/api/review','/api/rule','/api/blacklist/import']:
     try:
      with connect() as c:export_all(c)
     except OSError:result['warning']='Database đã lưu, nhưng xuất file lỗi. Kiểm tra quyền thư mục exports và bấm xuất lại.'
+   if path in ['/api/backup/sync','/api/import','/api/review','/api/rule'] or path=='/api/blacklist/import' and not o.get('preview',True):
+    BACKUP.sync(connect,force=path=='/api/backup/sync')
+    with connect() as c:result['backup']=BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0]))
    self.reply(result)
+  except work.Conflict as e:self.reply({'error':str(e),'conflict':True},409)
   except (ValueError,TypeError,KeyError,sqlite3.IntegrityError) as e:self.reply({'error':str(e)},400)
   except Exception:
    import traceback;traceback.print_exc();self.reply({'error':'Lỗi máy chủ; dữ liệu chưa lưu hoặc cần kiểm tra log.'},500)
 
 if __name__=='__main__':
  if os.environ.get('RENDER') and not PASSWORD:raise SystemExit('Set STUDIO_PASSWORD before deploying')
+ try:BACKUP.restore_if_missing()
+ except Exception:raise SystemExit('Không thể khôi phục Git backup. Kiểm tra repo private, token và kết nối; server dừng để tránh ghi đè dữ liệu cũ.')
  init()
+ def retry_backup():
+  while True:
+   time.sleep(20)
+   if BACKUP.configured:
+    with MUTATION_LOCK:BACKUP.sync(connect)
+ threading.Thread(target=retry_backup,daemon=True).start()
  with connect() as c:export_all(c)
  port=int(os.environ.get('PORT','8765'))
  print(f'Blacklist Studio: http://127.0.0.1:{port} — Ctrl+C để dừng',flush=True)
- HTTPServer((os.environ.get('HOST','0.0.0.0'),port),Handler).serve_forever()
+ ThreadingHTTPServer((os.environ.get('HOST','0.0.0.0'),port),Handler).serve_forever()
