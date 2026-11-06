@@ -6,10 +6,10 @@ Web tiếng Việt để nhập thông tin, gán nhãn thủ công, nhập và x
 1. Giải nén. Đưa NỘI DUNG thư mục này lên root một repository GitHub riêng (app.py và render.yaml ở root).
 2. Render → New → Blueprint → kết nối repository đó. Render đọc render.yaml.
 3. Đặt STUDIO_PASSWORD là mật khẩu mạnh, riêng cho công cụ này. Username mặc định admin; có thể đổi STUDIO_USERNAME.
-4. Xem chi phí gói web trả phí và disk trong Render rồi triển khai. Không dùng Free với SQLite để lưu lâu dài.
+4. Cấu hình mặc định dùng gói Free, không gắn persistent disk. Kiểm tra gói Free trong Render rồi triển khai. Dữ liệu SQLite chỉ lưu tạm; tải bản sao lưu trước khi đóng phiên làm việc hoặc redeploy.
 5. Mở URL HTTPS Render cấp. Trình duyệt hỏi tên và mật khẩu; nhập admin và STUDIO_PASSWORD. Điền tên người thao tác ở thanh trái.
 
-Nếu tạo Web Service thủ công: runtime Python; build `python -m compileall -q app.py`; start `python app.py`; health `/health`; đặt biến môi trường và disk giống render.yaml. Root Directory để trống nếu app.py ở root. Chỉ một instance, một tiến trình. Không dùng Static Site.
+Nếu tạo Web Service thủ công: runtime Python; build `python -m compileall -q app.py`; start `python app.py`; health `/health`; chọn gói Free, không thêm disk; đặt biến môi trường giống render.yaml. Root Directory để trống nếu app.py ở root. Chỉ một instance, một tiến trình. Không dùng Static Site.
 
 ## Thao tác
 - “Thêm mẫu”: nhập câu, ngữ cảnh, nguồn, đánh dấu tự viết hay thực tế; lưu vào kho.
@@ -24,7 +24,7 @@ Nếu tạo Web Service thủ công: runtime Python; build `python -m compileall
 - Tải training_data.jsonl và backup.sql để sao lưu. SQL là SQLite, không phải MySQL. Hướng dẫn phục hồi bên dưới.
 
 ## Lưu trữ và sao lưu
-SQLite tại /var/data/database/studio.sqlite3; file xuất tại /var/data/exports. Disk phải gắn ở /var/data. Filesystem mặc định của Render mất thay đổi khi restart/redeploy. Persistent disk là tài nguyên trả phí. Không tắt/xóa disk khi đổi bản deploy. Chỉ dữ liệu bên dưới mount path được giữ. Xuất backup.sql định kỳ về máy; xóa service/disk có thể mất dữ liệu.
+Bản Free lưu SQLite tại /tmp/blacklist-studio/database/studio.sqlite3 và file xuất tại /tmp/blacklist-studio/exports, không có persistent disk. Dữ liệu có thể mất khi service restart, redeploy hoặc Render thay instance. Service Free có thể ngủ khi không có truy cập; lần mở tiếp theo cần chờ khởi động. Tải backup.sql và blacklist JSON về máy sau mỗi phiên làm việc. JSON có thể nhập lại qua giao diện; backup.sql cần phục hồi thủ công theo hướng dẫn dưới đây. Muốn giữ dữ liệu lâu dài trên bản web cần bổ sung database bên ngoài hoặc chuyển sang persistent disk trả phí.
 
 Phục hồi backup.sql: dừng server, giữ bản sao database cũ, dùng Python/SQLite tạo database MỚI và executescript nội dung SQL, kiểm tra rồi thay studio.sqlite3. Không chạy vào database đang có dữ liệu. Không có giao diện upload SQL vì SQL thực thi có thể sửa/xóa toàn kho.
 
