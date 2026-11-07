@@ -79,7 +79,7 @@ class NativeParquetImports:
      c.execute("UPDATE workspace_meta SET value=CAST(value AS INTEGER)+1 WHERE key='version'")
     job['touched']=time.time()
     if self.backup.configured and time.monotonic()-last_backup>=20:
-     with self.lock:self.backup.sync(self.connect)
+     self.backup.request_sync()
      last_backup=time.monotonic()
     # Brief yield between commits keeps annotation/heartbeat requests responsive.
     stop.wait(.005)
@@ -95,4 +95,4 @@ class NativeParquetImports:
     c.execute("UPDATE workspace_meta SET value=CAST(value AS INTEGER)+1 WHERE key='version'")
    if job:job['import_running']=False;job['touched']=time.time()
    if self.backup.configured:
-    with self.lock:self.backup.sync(self.connect)
+    self.backup.request_sync()

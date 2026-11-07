@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit,parse_qs
-import threading, time
+import threading, time, shutil
 import collaboration as work
 import accounts as auth
 import administration as adminwork
@@ -23,6 +23,7 @@ TOKEN=uuid.uuid4().hex
 PASSWORD=os.environ.get('STUDIO_PASSWORD','')
 USERNAME=os.environ.get('STUDIO_USERNAME','admin').strip().lower()
 MUTATION_LOCK=threading.RLock()
+EXPORT_LOCK=threading.Lock()
 BACKUP=GitBackup(DATA)
 PARQUET=parquet_import.ParquetUploads()
 
@@ -145,27 +146,31 @@ def state(c,user=None,query=None):
 
 def atomic(path,text):
  tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(text,encoding='utf8');tmp.replace(path)
-def export_all(c):
- # Stream files rather than building all imported text, reviews and SQL in RAM.
+def export_all(c,only=None):
+ # Build only the requested download, with one consistent read snapshot.
+ # Annotation writes do not regenerate exports or hold this separate export lock.
  if not c.in_transaction:c.execute('BEGIN')
- stamp=now();rules=[]
- for row in c.execute('SELECT * FROM rules ORDER BY id DESC'):
-  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(blacklist_workflow.details(c,rule))
- atomic(EXPORTS/'blacklist.json',dumps({'schema_version':1,'exported_at':stamp,'normalization':'NFC, whitespace, casefold; preserve accents','action':'REVIEW','rules':[r for r in rules if r['status']=='active']}))
- atomic(EXPORTS/'blacklist_drafts.json',dumps({'exported_at':stamp,'rules':rules}))
- target=EXPORTS/'training_data.jsonl';temp=target.with_suffix('.jsonl.tmp')
- with temp.open('w',encoding='utf8') as output:
-  for row in c.execute("SELECT s.* FROM samples s WHERE s.archived_at IS NULL AND s.needs_review=0 AND EXISTS(SELECT 1 FROM reviews r WHERE r.sample_id=s.id)"):
-   sample=dict(row);r=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(sample['id'],)).fetchone()
-   if r['decision']=='UNSURE':continue
-   labels=json.loads(r['labels_json'])
-   data={'id':sample['id'],'text':sample['text'],'context':sample['context'],'source':sample['source'],'synthetic':bool(sample['synthetic']),'text_hash':sample['fingerprint'],'review_id':r['id'],'review_revision':r['revision'],'policy_version':r['policy_version'],'labels':labels,'label_mask':{k:int(v is not None) for k,v in labels.items()},'intent':r['intent'],'evidence':r['evidence'],'reason':r['reason']}
-   output.write(dumps(data)+'\n')
- temp.replace(target)
- target=EXPORTS/'backup.sql';temp=target.with_suffix('.sql.tmp')
- with temp.open('w',encoding='utf8') as output:
-  for line in c.iterdump():output.write(line+'\n')
- temp.replace(target)
+ if only is None or only in ['blacklist.json','blacklist_drafts.json']:
+  stamp=now();rules=[]
+  for row in c.execute('SELECT * FROM rules ORDER BY id DESC'):
+   rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(blacklist_workflow.details(c,rule))
+  if only is None or only=='blacklist.json':atomic(EXPORTS/'blacklist.json',dumps({'schema_version':1,'exported_at':stamp,'normalization':'NFC, whitespace, casefold; preserve accents','action':'REVIEW','rules':[r for r in rules if r['status']=='active']}))
+  if only is None or only=='blacklist_drafts.json':atomic(EXPORTS/'blacklist_drafts.json',dumps({'exported_at':stamp,'rules':rules}))
+ if only is None or only=='training_data.jsonl':
+  target=EXPORTS/'training_data.jsonl';temp=target.with_suffix('.jsonl.tmp')
+  with temp.open('w',encoding='utf8') as output:
+   for row in c.execute("SELECT s.* FROM samples s WHERE s.archived_at IS NULL AND s.needs_review=0 AND EXISTS(SELECT 1 FROM reviews r WHERE r.sample_id=s.id)"):
+    sample=dict(row);r=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(sample['id'],)).fetchone()
+    if r['decision']=='UNSURE':continue
+    labels=json.loads(r['labels_json'])
+    data={'id':sample['id'],'text':sample['text'],'context':sample['context'],'source':sample['source'],'synthetic':bool(sample['synthetic']),'text_hash':sample['fingerprint'],'review_id':r['id'],'review_revision':r['revision'],'policy_version':r['policy_version'],'labels':labels,'label_mask':{k:int(v is not None) for k,v in labels.items()},'intent':r['intent'],'evidence':r['evidence'],'reason':r['reason']}
+    output.write(dumps(data)+'\n')
+  temp.replace(target)
+ if only is None or only=='backup.sql':
+  target=EXPORTS/'backup.sql';temp=target.with_suffix('.sql.tmp')
+  with temp.open('w',encoding='utf8') as output:
+   for line in c.iterdump():output.write(line+'\n')
+  temp.replace(target)
 
 
 def import_blacklist(c,o):
@@ -244,14 +249,18 @@ class Handler(BaseHTTPRequestHandler):
     with connect() as c:self.reply({'reviews':[dict(r) for r in c.execute('SELECT * FROM reviews ORDER BY id DESC LIMIT 500')],'rules':[dict(r) for r in c.execute('SELECT * FROM rule_history ORDER BY id DESC LIMIT 500')]})
    elif path.startswith('/export/'):
     filename=path.rsplit('/',1)[-1];require(filename in ['blacklist.json','blacklist_drafts.json','training_data.jsonl','backup.sql'],'File không hợp lệ')
-    with MUTATION_LOCK,connect() as c:export_all(c)
-    self.reply((EXPORTS/filename).read_text(encoding='utf8'),ctype='text/plain; charset=utf-8',filename=filename)
+    with EXPORT_LOCK:
+     with connect() as c:export_all(c,filename)
+     stream=(EXPORTS/filename).open('rb')
+    with stream:
+     self.send_response(200);self.send_header('Content-Type','text/plain; charset=utf-8');self.send_header('Content-Length',str(os.fstat(stream.fileno()).st_size));self.send_header('Content-Disposition','attachment; filename="'+filename+'"');self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers()
+     shutil.copyfileobj(stream,self.wfile,length=1024*1024)
    else:self.reply({'error':'Không tìm thấy'},404)
   except auth.Forbidden as e:self.reply({'error':str(e)},403)
   except ValueError as e:self.reply({'error':str(e)},400)
  def do_POST(self):
   self.received_at=time.time()
-  with MUTATION_LOCK:self.handle_post()
+  self.handle_post()
  def handle_post(self):
   try:
    path=urlsplit(self.path).path
@@ -264,7 +273,8 @@ class Handler(BaseHTTPRequestHandler):
     n=int(self.headers.get('Content-Length','0'));require(0<n<=parquet_import.CHUNK_BYTES,'Khối tải lên tối đa 1 MiB.')
     query=parse_qs(urlsplit(self.path).query);key=query.get('upload_id',[''])[0];offset=int(query.get('offset',['-1'])[0])
     PARQUET.get(key,self.user['id']);data=self.rfile.read(n);require(len(data)==n,'Khối tải lên chưa hoàn tất.')
-    return self.reply(PARQUET.append(key,self.user['id'],offset,data))
+    with MUTATION_LOCK:result=PARQUET.append(key,self.user['id'],offset,data)
+    return self.reply(result)
    require(self.headers.get('Content-Type','').split(';')[0]=='application/json','Yêu cầu cần Content-Type application/json.')
    origin=self.headers.get('Origin')
    require(not origin or urlsplit(origin).netloc==self.headers.get('Host'),'Nguồn yêu cầu không hợp lệ.')
@@ -277,9 +287,13 @@ class Handler(BaseHTTPRequestHandler):
    if not self.authorized():return
    require(hmac.compare_digest(self.headers.get('X-Studio-Token',''),self.user['csrf']),'Phiên hết hạn. Tải lại trang.')
    if path.startswith(('/api/admin/','/api/parquet/')) or path in ['/api/import','/api/blacklist/import','/api/backup/sync']:auth.admin(self.user)
-   if path=='/api/parquet/import/start':return self.reply(NATIVE_IMPORTS.start(auth.public(self.user),o))
+   if path=='/api/parquet/import/start':
+    with MUTATION_LOCK:result=NATIVE_IMPORTS.start(auth.public(self.user),o)
+    return self.reply(result)
    if path=='/api/parquet/import/pause':return self.reply(NATIVE_IMPORTS.pause(self.user['id'],o.get('batch_id')))
-   if path.startswith('/api/parquet/'):return self.reply(PARQUET.action(path,self.user['id'],o))
+   if path.startswith('/api/parquet/'):
+    with MUTATION_LOCK:result=PARQUET.action(path,self.user['id'],o)
+    return self.reply(result)
    raw_client=o.get('client_id','')
    require(isinstance(raw_client,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',raw_client)),'Thiếu mã phiên làm việc.')
    o['client_id']=hashlib.sha256((str(self.user['id'])+':'+raw_client).encode()).hexdigest()
@@ -290,7 +304,7 @@ class Handler(BaseHTTPRequestHandler):
    signature={k:v for k,v in o.items() if k not in ['_user','reviewer','_received_at']}
    signature['_actor_id']=self.user['id']
    request_hash=hashlib.sha256(dumps(signature).encode()).hexdigest()
-   with connect() as c:
+   with MUTATION_LOCK,connect() as c:
     c.execute('BEGIN IMMEDIATE')
     if opid:cached=c.execute('SELECT * FROM operations WHERE id=?',(opid,)).fetchone()
     if cached:
@@ -312,7 +326,9 @@ class Handler(BaseHTTPRequestHandler):
      seconds=o.get('fast_seconds');require(type(seconds) in [int,float] and 1<=seconds<=120,'Ngưỡng cần từ 1 đến 120 giây.')
      c.execute("UPDATE workspace_meta SET value=? WHERE key='fast_seconds'",(str(seconds),));result={'updated':True};changed=True
     elif path=='/api/admin/audit':result=adminwork.audit_review(c,o,self.user,now());changed=True
-    elif path=='/api/work/claim':result=work.claim(c,o)
+    elif path=='/api/work/claim':
+     result=work.claim(c,o)
+     if result.get('sample_id'):result['sample']=sample_state(c,c.execute('SELECT * FROM samples WHERE id=?',(result['sample_id'],)).fetchone())
     elif path=='/api/work/heartbeat':work.heartbeat(c,o);result={'held':True}
     elif path=='/api/draft':changed=work.save_draft(c,o,now());result={'draft_saved':True}
     elif path=='/api/backup/sync':result={'requested':True}
@@ -376,13 +392,9 @@ class Handler(BaseHTTPRequestHandler):
       if 'login_code' in result:receipt['code_once']=True
       c.execute('INSERT INTO operations VALUES(?,?,?,?,?)',(opid,path,request_hash,dumps(receipt),now()))
      if changed:c.execute("UPDATE workspace_meta SET value=CAST(value AS INTEGER)+1 WHERE key='version'")
-   if path in ['/api/import','/api/review','/api/rule','/api/blacklist/import','/api/blacklist/propose']:
-    try:
-     with connect() as c:export_all(c)
-    except OSError:result['warning']='Database đã lưu, nhưng xuất file lỗi. Kiểm tra quyền thư mục exports.'
-   immediate=path in ['/api/backup/sync','/api/import','/api/review','/api/rule','/api/blacklist/propose'] or path=='/api/blacklist/import' and not o.get('preview',True) or path.startswith('/api/admin/') and changed
-   if immediate:
-    BACKUP.sync(connect,force=path=='/api/backup/sync')
+   if path=='/api/backup/sync':BACKUP.sync(connect,force=True)
+   elif changed or cached:BACKUP.request_sync()
+   if changed or cached or path=='/api/backup/sync':
     with connect() as c:result['backup']=BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0]))
    self.reply(result)
   except parquet_import.UploadExpired as e:self.reply({'error':str(e),'upload_expired':True},410)
@@ -399,13 +411,7 @@ if __name__=='__main__':
  try:BACKUP.restore_if_missing()
  except Exception:raise SystemExit('Không thể khôi phục Git backup. Kiểm tra repo private, token và kết nối; server dừng để tránh ghi đè dữ liệu cũ.')
  init()
- def retry_backup():
-  while True:
-   time.sleep(20)
-   if BACKUP.configured:
-    with MUTATION_LOCK:BACKUP.sync(connect)
- threading.Thread(target=retry_backup,daemon=True).start()
- with connect() as c:export_all(c)
+ BACKUP.start_worker(connect)
  port=int(os.environ.get('PORT','8765'))
  print(f'Blacklist Studio: http://127.0.0.1:{port} — Ctrl+C để dừng',flush=True)
  ThreadingHTTPServer((os.environ.get('HOST','0.0.0.0'),port),Handler).serve_forever()

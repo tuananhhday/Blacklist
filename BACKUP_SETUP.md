@@ -24,10 +24,11 @@ Render Free có ổ tạm. Nếu đang có dữ liệu, tải `backup.sql` và t
 
 ## App làm gì
 
-- Mỗi lần nhập mẫu, lưu nhãn hoặc lưu luật: commit SQLite trước, sau đó thử đẩy snapshot Git. Response chỉ báo Git đã đồng bộ nếu GitHub xác nhận thành công.
-- Khi đang gõ: giữ nháp trên thiết bị ngay; sau 1,6 giây ngừng thao tác gửi nháp lên server. Server gom thay đổi và thử backup mỗi 20 giây. Nhãn đã lưu mà Git chưa đồng bộ vẫn giữ thêm trên thiết bị.
+- Mỗi lần nhập mẫu, lưu nhãn hoặc lưu luật: commit SQLite trước rồi báo lưu thành công và xếp backup chạy nền. Các thay đổi được gom bởi một worker, các lần thử cách nhau khoảng 20 giây. Response lưu không chờ nén/upload Git hoặc xuất toàn bộ database; chỉ báo Git đã đồng bộ nếu đúng phiên bản đã được GitHub xác nhận. Lúc chờ backup, nhãn đã lưu vẫn giữ thêm trên thiết bị.
+- Khi đang gõ: giữ nháp trên thiết bị ngay; sau 1,6 giây ngừng thao tác gửi nháp lên server. Worker gom thay đổi và thử backup cách nhau khoảng 20 giây; khi GitHub chậm/lỗi khoảng chờ có thể dài hơn. Worker không giữ khóa ghi khi nén/upload, nên người khác vẫn có thể lưu. Nhãn đã lưu mà Git chưa đồng bộ vẫn giữ thêm trên thiết bị.
 - SQLite snapshot nhất quán được tạo bằng SQLite Backup API. Snapshot chứa mẫu, lịch sử nhãn, luật, bản nháp và mã chống gửi trùng. Lượt giữ mẫu không được phục hồi để tránh khóa người dùng sau restart.
 - Khi Render khởi động mà database không còn: tải backup private, kiểm tra định dạng/integrity rồi khôi phục trước khi mở server. Nếu đã cấu hình backup mà GitHub lỗi, server dừng khởi động thay vì mở một kho trống rồi ghi đè backup.
+- Nút **Sao lưu Git ngay** yêu cầu đồng bộ và chờ kết quả; thao tác này không giữ khóa ghi của người gán nhãn. Kiểm tra đúng trạng thái đã đồng bộ trước khi redeploy. File SQL/training/blacklist được tạo mới khi bấm tải, không tái tạo sau mỗi lần lưu.
 - Lịch sử commit của repo giữ các phiên bản snapshot. Không tự xóa lịch sử backup. Token hết hạn hoặc repo chuyển public sẽ ngừng sao lưu và hiển thị lỗi.
 
 ## Giới hạn cần biết

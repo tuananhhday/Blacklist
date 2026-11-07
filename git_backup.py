@@ -1,5 +1,5 @@
 """Private GitHub snapshots; credentials stay in Render environment variables."""
-import base64, gzip, io, json, os, re, sqlite3, tempfile, threading,shutil
+import base64, gzip, io, json, os, re, sqlite3, tempfile, threading,shutil,time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -11,8 +11,28 @@ class GitBackup:
   self.token=os.environ.get('GITHUB_BACKUP_TOKEN','').strip();self.branch=os.environ.get('GITHUB_BACKUP_BRANCH','main')
   self.path='snapshots/latest.sqlite3.gz';self.last_success=None;self.last_version=-1;self.error=None
   self.remote_sha=None;self.lock=threading.Lock()
+  self.wake=threading.Event();self.stopping=threading.Event();self.worker=None
  @property
  def configured(self):return bool(self.repo and self.token)
+ def request_sync(self):
+  # All writers share one worker. Never wait for GitHub on an annotation request.
+  if self.configured:self.wake.set()
+ def start_worker(self,connect,interval=20):
+  if self.worker and self.worker.is_alive():return
+  self.stopping.clear()
+  def run():
+   last_attempt=0
+   while not self.stopping.is_set():
+    self.wake.wait(interval);self.wake.clear()
+    if self.stopping.is_set():break
+    delay=max(0,last_attempt+interval-time.monotonic())
+    if delay and self.stopping.wait(delay):break
+    if self.configured:self.sync(connect)
+    last_attempt=time.monotonic()
+  self.worker=threading.Thread(target=run,daemon=True,name='studio-git-backup');self.worker.start()
+ def stop_worker(self):
+  self.stopping.set();self.wake.set()
+  if self.worker:self.worker.join(timeout=5)
  def request(self,path,method='GET',body=None):
   req=Request('https://api.github.com'+path,data=json.dumps(body).encode() if body is not None else None,
    headers={'Authorization':'Bearer '+self.token,'Accept':'application/vnd.github+json','Content-Type':'application/json','User-Agent':'Blacklist-Studio','X-GitHub-Api-Version':'2022-11-28'},method=method)
@@ -69,6 +89,10 @@ class GitBackup:
   if not self.configured:return self.status(-1)
   with self.lock:
    try:
+    if not force and self.last_version>=0 and not self.error:
+     with connect() as current:
+      version=int(current.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0])
+     if version==self.last_version:return self.status(version)
     self.private_repo()
     with tempfile.TemporaryDirectory() as temp:
      dest=Path(temp)/'snapshot.sqlite3'
@@ -83,7 +107,7 @@ class GitBackup:
      if version==self.last_version and not force:
       self.error=None;return self.status(version)
      archive=Path(temp)/'snapshot.sqlite3.gz'
-     with dest.open('rb') as raw,gzip.open(archive,'wb',compresslevel=9) as compressed:shutil.copyfileobj(raw,compressed,length=1024*1024)
+     with dest.open('rb') as raw,gzip.open(archive,'wb',compresslevel=6) as compressed:shutil.copyfileobj(raw,compressed,length=1024*1024)
      if archive.stat().st_size>20_000_000:raise ValueError('Backup vượt 20 MB nén. Tải backup.sql và chuyển sang database lưu bền.')
      packed=archive.read_bytes()
     remote=self.remote_file();sha=remote['sha'] if remote else None
