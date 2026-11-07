@@ -4,8 +4,8 @@
 
 1. Mở web. Tài khoản admin là `STUDIO_USERNAME` (mặc định `admin`); mã đăng nhập là `STUDIO_PASSWORD` hiện có trong Environment trên Render. Đây là mã riêng của admin, không dùng làm mã chung cho nhóm.
 2. Vào Giám sát & chia việc → Tạo tài khoản thành viên. Điền tài khoản (3–40 chữ thường/số/`_.-`) và tên hiển thị. App sinh mã riêng, chỉ hiển thị lần tạo/cấp mã thành công. Gửi riêng **tài khoản + mã** cho đúng người; app không tự nhắn cho thành viên.
-3. Thêm/import dữ liệu tại Quản lý bình luận. Với Parquet, chọn file để mở bảng xem trước, bấm vào tiêu đề cột bình luận rồi bấm Nhập toàn bộ. Không cần nhập tên cột hoặc chia dòng; có tiến độ và nút tạm dừng/tiếp tục. Đóng hộp không dừng nhập trên server. Chọn người nhận việc, nhập số câu tối đa/người (0 là chia hết), xem trước rồi xác nhận. Mỗi bình luận chỉ thuộc một người tại một thời điểm. Những câu đã giao hoặc đang được giữ không bị chia chồng.
-4. Thành viên đăng nhập, thấy phần việc riêng và số bình luận còn lại, nhận câu tiếp theo, lưu liên tục. Có thể chọn gửi thêm nháp blacklist khi lưu câu vi phạm. Thành viên không có quyền import, xem kho của người khác, xuất SQL hoặc bật luật.
+3. Thêm/import dữ liệu tại Quản lý bình luận. Với Parquet, chọn file để mở bảng xem trước, bấm vào tiêu đề cột bình luận rồi bấm **Nhập toàn bộ** ở thanh luôn hiện phía trên bảng. Dùng **Xem cột bên trái/phải** để cuộn ngang; cột số/nhãn bấm xem được nhưng không dùng làm bình luận. Không cần nhập tên cột hoặc chia dòng; có tiến độ và nút tạm dừng/tiếp tục. Đóng hộp không dừng nhập trên server. Chọn người nhận việc, nhập số câu tối đa/người (0 là chia hết), xem trước rồi xác nhận. Mỗi bình luận chỉ thuộc một người tại một thời điểm. Những câu đã giao hoặc đang được giữ không bị chia chồng.
+4. Thành viên đăng nhập, thấy phần việc riêng và số bình luận còn lại, nhận câu tiếp theo, chọn nhãn rồi lưu liên tục. Với câu vi phạm đặc trưng, bôi đen một đoạn (không bắt buộc) rồi bấm **Lưu & gửi Blacklist nháp**. Có thể gửi câu vừa lưu bằng thanh thông báo sau khi chuyển câu. Hành vi, bằng chứng và ghi chú bổ sung ở tab **Blacklist**. Thành viên không có quyền import, xem kho của người khác, xuất SQL hoặc bật luật.
 5. Admin xem tiến độ/lịch sử, mở từng lượt để kiểm tra. Có nút Nhãn đạt hoặc Trả lại để sửa; khi trả lại cần ghi lý do. Câu quay về hàng đợi của thành viên, lịch sử nhãn cũ được giữ.
 
 ## Quản lý thông tin
@@ -16,7 +16,7 @@
 - Xóa: thu hồi truy cập và đưa tài khoản vào trạng thái đã xóa, giữ lịch sử; các phần chưa hoàn thành về kho để admin chia lại. Khôi phục cấp mã mới, tài khoản vẫn có cùng UID. Tên tài khoản đã xóa được giữ để tránh nhầm người.
 - Thu hồi chưa làm: thu hồi phần pending không có lượt giữ còn hạn, giữ các câu đã xong. Nếu câu cần sửa đã có nhãn thì quay về kho với cờ cần gán lại.
 - Bình luận: admin có thể thêm, sửa, xóa và khôi phục. Xóa đưa vào lưu trữ, không hủy nhãn/lịch sử. Đổi nội dung một mẫu đã có nhãn tạo mẫu thay thế; nhãn cũ không tự áp vào nội dung mới. Sửa khi có người đang xử lý bị chặn để tránh mất thao tác.
-- Blacklist: thành viên gửi nháp từ câu vi phạm thuộc phần mình; admin xem, sửa, kiểm tra các ví dụ và bật/tắt luật.
+- Blacklist: thành viên gửi nháp từ câu vi phạm thuộc phần mình rồi bổ sung hành vi bằng nút chọn, bằng chứng nguyên văn và ghi chú trong Blacklist. Nháp giữ toàn câu, phiên bản nhãn và các nhóm Có; mỗi nhóm vi phạm có một nháp riêng. Gửi lại cùng nguồn/phiên bản/nhóm/đoạn không tạo trùng hoặc tăng lượt gán nhãn. Admin xem, sửa, kiểm tra các ví dụ và bật/tắt luật; nháp chưa tự bật luật. Khi nhãn nguồn đổi, cần kiểm tra và đề xuất lại từ nhãn mới trước khi bật.
 
 ## Thêm nhầm và quay lại trạng thái trước
 

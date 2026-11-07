@@ -12,6 +12,7 @@ import administration as adminwork
 from git_backup import GitBackup
 import parquet_import
 import import_history
+import blacklist_workflow
 from native_parquet import NativeParquetImports,SCHEMA as NATIVE_IMPORT_SCHEMA
 
 ROOT=Path(__file__).resolve().parent
@@ -96,7 +97,7 @@ def validate_rule(o):
   text=field(t,'text',20000,True);expected=field(t,'expected',30,True)
   require(expected in ['MATCH','NO_MATCH','CONTEXT_REVIEW'],'Kết quả mong muốn không hợp lệ');clean.append({'text':text,'expected':expected})
  rule={'name':name,'category':category,'kind':kind,'config':cfg,'tests':clean,
-       'status':field(o,'status',30,True),'reviewer':field(o,'reviewer',100,True),'reason':field(o,'reason',2000,True),'source_sample_id':o.get('source_sample_id') or None}
+       'status':field(o,'status',30,True),'reviewer':field(o,'reviewer',100,True),'reason':field(o,'reason',2000,True),'source_sample_id':o.get('source_sample_id') or None,'intent':field(o,'intent',100),'evidence':field(o,'evidence',20000)}
  require(rule['status'] in ['draft','active','disabled'],'Trạng thái không hợp lệ')
  results=[dict(t,actual=evaluate(rule,t['text'])['result']) for t in clean]
  if rule['status']=='active':
@@ -133,7 +134,7 @@ def state(c,user=None,query=None):
  if user and user['role']=='member':rulequery+=' WHERE created_by_user_id=?';ruleargs=[user['id']]
  rules=[]
  for row in c.execute(rulequery+' ORDER BY id DESC',ruleargs):
-  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(rule)
+  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(blacklist_workflow.details(c,rule))
  claims=[dict(r) for r in c.execute('SELECT sample_id,reviewer,expires_at FROM work_claims WHERE expires_at>?',(time.time(),))]
  allowed={sample['id'] for sample in samples};claims=[r for r in claims if r['sample_id'] in allowed]
  meta=dict(c.execute('SELECT key,value FROM workspace_meta'));backup=BACKUP.status(int(meta['version']))
@@ -149,7 +150,7 @@ def export_all(c):
  if not c.in_transaction:c.execute('BEGIN')
  stamp=now();rules=[]
  for row in c.execute('SELECT * FROM rules ORDER BY id DESC'):
-  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(rule)
+  rule=dict(row);rule['config']=json.loads(rule.pop('config_json'));rule['tests']=json.loads(rule.pop('tests_json'));rules.append(blacklist_workflow.details(c,rule))
  atomic(EXPORTS/'blacklist.json',dumps({'schema_version':1,'exported_at':stamp,'normalization':'NFC, whitespace, casefold; preserve accents','action':'REVIEW','rules':[r for r in rules if r['status']=='active']}))
  atomic(EXPORTS/'blacklist_drafts.json',dumps({'exported_at':stamp,'rules':rules}))
  target=EXPORTS/'training_data.jsonl';temp=target.with_suffix('.jsonl.tmp')
@@ -184,6 +185,9 @@ def import_blacklist(c,o):
   for r in prepared:
    args=(r['name'],r['category'],r['kind'],dumps(r['config']),dumps(r['tests']),'draft',1,None,reviewer,r['reason'],now())
    rid=c.execute('INSERT INTO rules(name,category,kind,config_json,tests_json,status,version,source_sample_id,reviewer,reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',args).lastrowid
+   source_text=field(row,'source_text',20000);source_context=field(row,'source_context',20000)
+   source_labels=row.get('source_labels',{});require(isinstance(source_labels,dict) and set(source_labels)<=set(CATEGORIES) and all(v is None or type(v) is int and v in [0,1] for v in source_labels.values()),'Nhãn nguồn tham khảo không hợp lệ')
+   c.execute('UPDATE rules SET intent=?,evidence=?,source_text=?,source_context=?,source_labels_json=? WHERE id=?',(r['intent'],r['evidence'],source_text,source_context,dumps(source_labels),rid))
    c.execute('INSERT INTO rule_history(rule_id,version,snapshot_json,created_at) VALUES(?,?,?,?)',(rid,1,dumps(dict(r,id=rid,version=1,action='REVIEW')),now()))
  return {'preview':o.get('preview',True),'added':len(prepared),'duplicates':duplicates,'items':[{'name':r['name'],'kind':r['kind'],'category':r['category']} for r in prepared]}
 
@@ -330,20 +334,17 @@ class Handler(BaseHTTPRequestHandler):
      if decision=='VIOLATION':require(1 in labels.values(),'Vi phạm cần ít nhất một nhãn Có')
      if decision=='ALLOW':require(1 not in labels.values() and 0 in labels.values(),'Hợp lệ cần ít nhất một nhóm đã kiểm tra Không')
      evidence=field(o,'evidence');require(not evidence or evidence in sample['text'],'Bằng chứng phải là đoạn có trong câu gốc')
-     reviewer=field(o,'reviewer',100,True);reason=field(o,'reason',2000,True);intent=field(o,'intent',100)
+     reviewer=field(o,'reviewer',100,True);reason=field(o,'reason',2000) or decision+' · '+', '.join(k for k,v in labels.items() if v==1);intent=field(o,'intent',100)
      cursor=c.execute('INSERT INTO reviews(sample_id,revision,decision,labels_json,intent,evidence,reason,reviewer,policy_version,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(sid,previous+1,decision,dumps(labels),intent,evidence,reason,reviewer,'demo-1',now()));result={'saved':True,'review_id':cursor.lastrowid}
      c.execute('UPDATE reviews SET user_id=?,attempt_id=?,elapsed_ms=?,active_ms=?,fast_flag=?,threshold_ms=? WHERE id=?',(self.user['id'],timing['attempt_id'],timing['elapsed_ms'],timing['active_ms'],timing['fast_flag'],timing['threshold_ms'],cursor.lastrowid))
      c.execute('UPDATE samples SET needs_review=0 WHERE id=?',(sid,))
      c.execute("UPDATE task_assignments SET state='done' WHERE sample_id=?",(sid,))
      if o.get('propose_rule') is True and decision=='VIOLATION':
-      for category,value in labels.items():
-       if value==1 and not c.execute("SELECT 1 FROM rules WHERE source_sample_id=? AND category=? AND kind='exact'",(sid,category)).fetchone():
-        config=dumps({'pattern':sample['text']});tests=dumps([{'text':sample['text'],'expected':'MATCH'}])
-        rid=c.execute("INSERT INTO rules(name,category,kind,config_json,tests_json,status,version,source_sample_id,reviewer,reason,updated_at,created_by_user_id) VALUES(?,?,'exact',?,?,'draft',1,?,?,?,?,?)",('Từ bình luận #'+str(sid),category,config,tests,sid,reviewer,reason,now(),self.user['id'])).lastrowid
-        row=dict(c.execute('SELECT * FROM rules WHERE id=?',(rid,)).fetchone())
-        c.execute('INSERT INTO rule_history(rule_id,version,snapshot_json,created_at) VALUES(?,1,?,?)',(rid,dumps(row),now()))
+      result.update(blacklist_workflow.propose(c,auth.public(self.user),{'sample_id':sid,'review_id':cursor.lastrowid,'candidate_evidence':o.get('candidate_evidence','')},now()))
      c.execute('DELETE FROM work_drafts WHERE owner=? AND sample_id=?',(work.owner(o),sid))
      c.execute('DELETE FROM work_claims WHERE sample_id=?',(sid,))
+    elif path=='/api/blacklist/propose':
+     result=blacklist_workflow.propose(c,auth.public(self.user),o,now());changed=any(p['created'] for p in result['proposals'])
     elif path=='/api/rule':
      if self.user['role']=='member':
       source=o.get('source_sample_id');auth.sample_access(c,self.user,source)
@@ -357,10 +358,13 @@ class Handler(BaseHTTPRequestHandler):
      r,tests=validate_rule(o);rid=o.get('id');version=1
      if rid:
       old=c.execute('SELECT version FROM rules WHERE id=?',(rid,)).fetchone();require(old is not None,'Không có luật');require(o.get('version')==old[0],'Luật đã thay đổi. Tải lại.');version=old[0]+1
+     existing_rule=c.execute('SELECT * FROM rules WHERE id=?',(rid,)).fetchone() if rid else None
+     blacklist_workflow.validate_evidence(c,r,existing_rule)
      args=(r['name'],r['category'],r['kind'],dumps(r['config']),dumps(r['tests']),r['status'],version,r['source_sample_id'],r['reviewer'],r['reason'],now())
      if rid:c.execute('UPDATE rules SET name=?,category=?,kind=?,config_json=?,tests_json=?,status=?,version=?,source_sample_id=?,reviewer=?,reason=?,updated_at=? WHERE id=?',args+(rid,))
      else:rid=c.execute('INSERT INTO rules(name,category,kind,config_json,tests_json,status,version,source_sample_id,reviewer,reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',args).lastrowid
      if not o.get('id'):c.execute('UPDATE rules SET created_by_user_id=? WHERE id=?',(self.user['id'],rid))
+     c.execute('UPDATE rules SET intent=?,evidence=? WHERE id=?',(r['intent'],r['evidence'],rid))
      snapshot=dict(r,id=rid,version=version,action='REVIEW');c.execute('INSERT INTO rule_history(rule_id,version,snapshot_json,created_at) VALUES(?,?,?,?)',(rid,version,dumps(snapshot),now()));result={'id':rid,'version':version,'tests':tests}
     elif path=='/api/test':
      r,tests=validate_rule(dict(o['rule'],status='draft'));result={'tests':tests,'probe':evaluate(r,field(o,'text',20000))}
@@ -372,11 +376,11 @@ class Handler(BaseHTTPRequestHandler):
       if 'login_code' in result:receipt['code_once']=True
       c.execute('INSERT INTO operations VALUES(?,?,?,?,?)',(opid,path,request_hash,dumps(receipt),now()))
      if changed:c.execute("UPDATE workspace_meta SET value=CAST(value AS INTEGER)+1 WHERE key='version'")
-   if path in ['/api/import','/api/review','/api/rule','/api/blacklist/import']:
+   if path in ['/api/import','/api/review','/api/rule','/api/blacklist/import','/api/blacklist/propose']:
     try:
      with connect() as c:export_all(c)
     except OSError:result['warning']='Database đã lưu, nhưng xuất file lỗi. Kiểm tra quyền thư mục exports.'
-   immediate=path in ['/api/backup/sync','/api/import','/api/review','/api/rule'] or path=='/api/blacklist/import' and not o.get('preview',True) or path.startswith('/api/admin/') and changed
+   immediate=path in ['/api/backup/sync','/api/import','/api/review','/api/rule','/api/blacklist/propose'] or path=='/api/blacklist/import' and not o.get('preview',True) or path.startswith('/api/admin/') and changed
    if immediate:
     BACKUP.sync(connect,force=path=='/api/backup/sync')
     with connect() as c:result['backup']=BACKUP.status(int(c.execute("SELECT value FROM workspace_meta WHERE key='version'").fetchone()[0]))

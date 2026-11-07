@@ -32,12 +32,13 @@ def migrate(c,username,password,stamp):
   'samples':{'archived_at':'TEXT','replacement_sample_id':'INTEGER REFERENCES samples(id)','needs_review':'INTEGER NOT NULL DEFAULT 0'},
   'auth_users':{'deleted_at':'TEXT'},
   'reviews':{'user_id':'INTEGER REFERENCES auth_users(id)','attempt_id':'INTEGER REFERENCES annotation_attempts(id)','elapsed_ms':'INTEGER','active_ms':'INTEGER','fast_flag':'INTEGER','threshold_ms':'INTEGER'},
-  'rules':{'created_by_user_id':'INTEGER REFERENCES auth_users(id)'},
+  'rules':{'created_by_user_id':'INTEGER REFERENCES auth_users(id)','intent':"TEXT NOT NULL DEFAULT ''",'evidence':"TEXT NOT NULL DEFAULT ''",'source_review_id':'INTEGER REFERENCES reviews(id)','source_text':"TEXT NOT NULL DEFAULT ''",'source_context':"TEXT NOT NULL DEFAULT ''",'source_labels_json':"TEXT NOT NULL DEFAULT '{}'",'proposal_key':'TEXT'},
   'work_claims':{'user_id':'INTEGER REFERENCES auth_users(id)','attempt_id':'INTEGER REFERENCES annotation_attempts(id)'}
  }.items():
   existing={row[1] for row in c.execute('PRAGMA table_info('+table+')')}
   for column,kind in columns.items():
    if column not in existing:c.execute('ALTER TABLE '+table+' ADD COLUMN '+column+' '+kind)
+ c.executescript((Path(__file__).parent/'sql/007_blacklist_proposals.sql').read_text(encoding='utf8'))
  if password:
   found=c.execute('SELECT * FROM auth_users WHERE username=?',(username,)).fetchone()
   if not found:c.execute("INSERT INTO auth_users(username,display_name,code_hash,role,created_at) VALUES(?,?,?,'admin',?)",(username,'Quản trị viên',hash_code(password),stamp))

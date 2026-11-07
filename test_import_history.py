@@ -40,6 +40,9 @@ class ReversibleImports(unittest.TestCase):
   self.admin.call('/api/admin/imports/restore',{'batch_id':bid});active={s['id'] for s in member.call('/api/state')['samples']};self.assertIn(replacement,active);self.assertNotIn(sid,active)
  def test_active_blacklist_blocks_bulk_undo(self):
   added=self.admin.call('/api/import',{'rows':[self.row('active-rule '+uuid.uuid4().hex)]});bid=added['import_batch_id'];sample=self.admin.call('/api/admin/samples?batch_id='+bid)['samples'][0]
+  self.admin.call('/api/work/claim',{'sample_id':sample['id']})
+  labels={k:None for k in self.admin.call('/api/state')['categories']};labels['spam']=1
+  self.admin.call('/api/review',{'sample_id':sample['id'],'base_revision':0,'decision':'VIOLATION','labels':labels,'reason':'Đã xác nhận cho kiểm thử'})
   rule={'name':'test active','category':'spam','kind':'exact','config':{'pattern':sample['text']},'tests':[{'text':sample['text'],'expected':'MATCH'},{'text':'câu đối chiếu','expected':'NO_MATCH'}],'status':'active','reason':'test','source_sample_id':sample['id']}
   saved=self.admin.call('/api/rule',rule);self.error(409,lambda:self.admin.call('/api/admin/imports/undo',{'batch_id':bid}))
   self.admin.call('/api/rule',dict(rule,id=saved['id'],version=saved['version'],status='disabled'));self.assertEqual(self.admin.call('/api/admin/imports/undo',{'batch_id':bid})['changed'],1)

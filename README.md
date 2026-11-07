@@ -29,7 +29,7 @@ Hướng dẫn thao tác: [ACCOUNT_WORKFLOW.md](ACCOUNT_WORKFLOW.md).
 1. Mỗi người đăng nhập bằng tài khoản và mã do admin cấp. Bấm nhận bình luận tiếp theo trong phần được giao; server giữ riêng mẫu này 180 giây và gia hạn mỗi 30 giây khi còn kết nối. Người khác nhận câu khác.
 2. Chọn Có / Không / Chưa kiểm tra ở từng nhóm. Một câu có thể có nhiều nhóm vi phạm. Phím `1–9` bật/tắt nhãn Có; `N` xác nhận các nhóm còn lại không vi phạm; `U` chọn Cần xem lại; `F` bật chế độ tập trung. Phím tắt không chạy khi đang gõ trong trường nhập liệu.
 3. Chọn kết luận rồi Lưu & tiếp theo (`Ctrl/Cmd + Enter`). Server kiểm tra lượt giữ và phiên bản nhãn; gửi lại cùng thao tác không tạo lần duyệt trùng. Nút Bỏ qua chuyển sang mẫu khác, giữ nháp cũ.
-4. Bằng chứng, hành vi và ghi chú ở phần thu gọn, không bắt buộc. Bỏ trống ghi chú sẽ lưu tóm tắt kết luận và nhãn đã chọn. Có thể hoàn tác thao tác chọn nhãn trước khi lưu.
+4. Màn này chỉ chọn nhãn và kết luận. Với câu vi phạm đặc trưng, có thể bôi đen một đoạn rồi bấm **Lưu & gửi Blacklist nháp**; nếu không bôi đen, nháp giữ nguyên câu nguồn. App lưu nhãn và chuyển sang câu tiếp theo. Thanh thông báo cũng cho gửi câu vi phạm vừa lưu vào Blacklist sau khi đã chuyển câu. Có thể hoàn tác thao tác chọn nhãn trước khi lưu.
 5. Nhãn chưa kiểm tra vẫn là `null`, xuất với `label_mask=0`; không tự đổi thành Không. Thao tác xác nhận các nhóm còn lại là hành động rõ ràng của người duyệt.
 
 Danh tính người duyệt lấy từ tài khoản đã xác thực; không nhận tên hay user_id tự khai từ trình duyệt. Giữ mẫu ngăn hai phiên cùng sửa một câu. Chỉ chạy một instance; xem giới hạn backup và lưu trữ trong tài liệu thiết lập.
@@ -38,7 +38,7 @@ Danh tính người duyệt lấy từ tài khoản đã xác thực; không nh�
 
 Thêm mẫu → Nhập từ file → chọn file. Với CSV/JSON/JSONL/TXT: Xem trước → Nhập vào hàng đợi. Với Parquet: file tự mở thành bảng → bấm tiêu đề cột bình luận → Nhập toàn bộ. CSV/JSON/JSONL/TXT tối đa 5 MB mỗi file và 5.000 câu mỗi lượt; gửi từng lô 50 câu và hiển thị tiến độ. Parquet tối đa 256 MiB, một file mỗi lượt; chọn cột bằng click và nhập toàn bộ file bằng một lần bấm. Không cần gõ tên cột hoặc chia số dòng thủ công. Có thể thử lại phần còn lại khi mất mạng; nội dung và ngữ cảnh trùng được bỏ qua bằng fingerprint có UNIQUE trong SQL.
 
-- Parquet (`.parquet`, `.pq`): chọn file để tự mở bảng xem trước 8 dòng; bấm tiêu đề cột hoặc ô trong cột văn bản. Cột số/nhãn không được chọn làm bình luận. App tự gợi ý cột phổ biến; có thể đổi bằng click. Nếu nhiều cột, dùng Cột trước/Cột tiếp để xem. **Nhập toàn bộ N dòng** chạy một job trên server, không gửi từng nhóm dữ liệu qua trình duyệt. Context/source/synthetic là tùy chọn thu gọn, có thể bỏ qua. Không tự áp dụng nhãn trong file.
+- Parquet (`.parquet`, `.pq`): chọn file để tự mở bảng xem trước 8 dòng; bấm tiêu đề cột hoặc ô trong cột văn bản. App tự gợi ý cột phổ biến; có thể đổi bằng click. Nút **Nhập toàn bộ N dòng** nằm ngay phía trên bảng và giữ hiện khi cuộn hộp nhập. Hai nút **Xem cột bên trái/phải** cuộn ngang bảng; file trên 20 cột có thể chuyển tiếp sang nhóm cột khác. Bấm cột số/nhãn để xem nhưng không đổi cột bình luận đang chọn; ví dụ chọn `text`, còn `SEXUAL`, `HATE SPEECH` là cột nhãn. Nhập toàn bộ chạy một job trên server, không gửi từng nhóm dữ liệu qua trình duyệt. Context/source/synthetic là tùy chọn thu gọn, có thể bỏ qua. Không tự áp dụng nhãn trong file.
 - Server đọc theo lô nhỏ, lưu SQLite theo checkpoint nhưng đây chỉ là cách xử lý bên trong: người dùng không phải chia đợt. Có thanh tiến độ, số thêm/trùng/bỏ qua và Tạm dừng/Tiếp tục. Đóng hộp hoặc đóng trình duyệt không dừng job khi server vẫn chạy; mở Nhập từ file để theo dõi tiếp. Nếu server restart mất file tạm, chọn lại đúng file/cột: app nhận diện SHA-256 và tiếp tục checkpoint đã lưu nếu database/backup còn. Tạm dừng có thể hoàn thành lô đang xử lý trước khi dừng.
 - Dòng trống/nội dung trên 20.000 ký tự được đếm và bỏ qua. File gốc được giữ tạm ngoài database, không đẩy file thô lên Git. Tất cả mẫu của file thuộc một đợt nhập để hoàn tác; job phải dừng xong trước khi hoàn tác. Chỉ admin được mở/nhập file; API vẫn kiểm tra session và CSRF.
 - TXT: mỗi dòng một bình luận.
@@ -58,7 +58,7 @@ Nếu có mẫu đang được giữ hoặc luật blacklist đang bật từ đ
 
 ## SQL và backup
 
-`sql/schema.sql`: mẫu, lịch sử nhãn, luật và lịch sử luật. `sql/003_collaboration.sql`: lượt giữ mẫu, bản nháp, phiên bản kho và biên nhận chống lưu trùng. `sql/004_accounts.sql` và migration trong accounts.py: tài khoản, session, chia việc, thời gian xử lý và kiểm tra chất lượng. Bản ghi cũ giữ nguyên, không gán tài khoản hoặc thời gian giả cho dữ liệu trước nâng cấp. Migration chạy tự động, giữ nguyên bảng và dữ liệu cũ. Ghi dùng transaction `BEGIN IMMEDIATE`; SQLite WAL cho phép đọc khi có nhiều người thao tác. Database vẫn là SQLite, không phải MySQL.
+`sql/schema.sql`: mẫu, lịch sử nhãn, luật và lịch sử luật. `sql/003_collaboration.sql`: lượt giữ mẫu, bản nháp, phiên bản kho và biên nhận chống lưu trùng. `sql/004_accounts.sql` và migration trong accounts.py: tài khoản, session, chia việc, thời gian xử lý và kiểm tra chất lượng. `sql/007_blacklist_proposals.sql` và migration trong accounts.py: bằng chứng, hành vi, ảnh chụp nhãn nguồn và khóa chống gửi nháp trùng. Bản ghi cũ giữ nguyên, không gán tài khoản hoặc thời gian giả cho dữ liệu trước nâng cấp. Migration chạy tự động, giữ nguyên bảng và dữ liệu cũ. Ghi dùng transaction `BEGIN IMMEDIATE`; SQLite WAL cho phép đọc khi có nhiều người thao tác. Database vẫn là SQLite, không phải MySQL.
 
 Nháp giữ trên thiết bị, tự gửi lên server; server thử backup Git mỗi 20 giây và sau thao tác lưu chính. Nếu Git chưa đồng bộ, bản nhãn vừa lưu vẫn giữ thêm trên thiết bị. Giao diện hiển thị riêng trạng thái nháp và Git. Có nút Sao lưu Git ngay và Tải nháp trên thiết bị.
 
@@ -66,7 +66,11 @@ Git lưu snapshot `snapshots/latest.sqlite3.gz` trong repo private riêng; khôi
 
 ## Blacklist và xuất dữ liệu
 
-Luật có thể tạo từ mẫu vi phạm đã lưu hoặc tạo thủ công. Nháp không được đưa vào blacklist đang bật. Muốn bật luật cần mẫu khớp và mẫu đối chiếu, các kiểm tra đều đạt. Luật chỉ chuyển duyệt, không tự xóa/chặn.
+Vào **Blacklist** để bổ sung **Hành vi / ngữ cảnh**, **Đoạn đặc trưng / bằng chứng** và **Ghi chú**. Hành vi dùng các nút chọn có chữ hiện sẵn. Nháp giữ câu nguồn, phiên bản nhãn, các nhóm vi phạm và đoạn đã chọn. Mỗi nhóm Có tạo một nháp; gửi lại cùng phiên bản, nhóm và đoạn đặc trưng không tạo nháp trùng. Gửi từ nhãn đã lưu không tạo thêm lượt gán nhãn hoặc đổi số đo thời gian.
+
+Thành viên chỉ sửa được nháp của mình trong phần được giao. Admin mới có phần cấu hình luật và quyền bật/tắt. Các nháp được tạo từ câu nguồn ở kiểu nguyên câu; đoạn bôi đen là bằng chứng để xây luật sau, chưa tự trở thành luật chặn theo từ khóa. Nếu nhãn nguồn đã đổi hoặc cần rà soát, nháp báo cần kiểm tra lại. Dữ liệu hành vi/bằng chứng và nguồn đi theo file xuất toàn bộ luật và SQL backup; nhập lại JSON giữ nguồn tham khảo nhưng không giả liên kết phiên bản nhãn của database khác.
+
+Luật cũng có thể tạo thủ công. Nháp không được đưa vào blacklist đang bật. Muốn bật luật cần mẫu khớp và mẫu đối chiếu, các kiểm tra đều đạt; nhãn nguồn liên kết phải còn hợp lệ. Luật chỉ chuyển duyệt, không tự xóa/chặn.
 
 Nhập blacklist JSON (`rules` hoặc mảng luật), CSV (`name,category,kind,pattern,reason`) hoặc TXT (mỗi dòng một nguyên câu). Mọi luật nhập thành nháp; mục trùng được bỏ qua. Tối đa 1.000 luật/lượt, file dưới 1,9 MB. Các nhóm dùng mã trong `sql/002_categories.sql`.
 
