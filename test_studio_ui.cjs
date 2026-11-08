@@ -21,10 +21,14 @@ class Element{
 const ids={},root=new Element('document'),stack=[root],voidTags=new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
 for(const token of html.match(/<!--[\s\S]*?-->|<![^>]*>|<[^>]+>|[^<]+/g)||[]){
  if(token.startsWith('<!'))continue;
- if(token.startsWith('</')){if(stack.length>1)stack.pop();continue}
+ if(token.startsWith('</')){const closing=token.match(/^<\/([\w-]+)/)?.[1]?.toUpperCase();assert.equal(stack.at(-1).tagName,closing,'Malformed HTML closing '+closing);stack.pop();continue}
  if(token.startsWith('<')){const match=token.match(/^<([\w-]+)/);if(!match)continue;const tag=match[1].toLowerCase(),element=new Element(tag);const attrs={};for(const a of token.matchAll(/([\w:-]+)(?:\s*=\s*"([^"]*)"|\s*=\s*'([^']*)')?/g)){if(a.index===1)continue;attrs[a[1]]=a[2]??a[3]??''}for(const[name,value]of Object.entries(attrs)){if(name==='id'){element.id=value;assert.ok(!ids[value],'duplicate id '+value);ids[value]=element}else if(name==='class')element.className=value;else if(name.startsWith('data-'))element.dataset[name.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=value;else if(name==='value')element.value=value;else if(['checked','hidden','disabled'].includes(name))element[name]=true;else element[name]=value}stack.at(-1).append(element);if(!voidTags.has(tag)&&!token.endsWith('/>'))stack.push(element);
  }else if(stack.at(-1).tagName==='OPTION')stack.at(-1)._text+=token;
 }
+assert.equal(stack.length,1,'HTML contains unclosed elements');
+// All controllers share this page: preserve import/export, backup and account
+// controls when replacing the Blacklist editor or its dialog.
+for(const file of ['app.js','admin.js','parquet.js','studio.js'])for(const ref of fs.readFileSync(__dirname+'/static/'+file,'utf8').matchAll(/(?:\$|el)\('([^']+)'\)/g))assert.ok(ids[ref[1]],file+' refers to missing control '+ref[1]);
 for(const element of Object.values(ids)){if(element.tagName==='SELECT')element.value=element.children.find(child=>child.tagName==='OPTION')?.value||'';element.defaultValue=element.value;element.defaultChecked=element.checked}
 const events={},timers=new Map();let timerSequence=0;
 const get=id=>{assert.ok(ids[id],'Missing HTML ID '+id);return ids[id]};
@@ -53,13 +57,27 @@ apiHandler=defaultApi;
  await ui.load('studio');await emit(get('studioFillTemplate'),'click');
  let snapshot=ui.getDraft();assert.equal(snapshot.item.examples[0].context,'');assert.equal(snapshot.item.examples[0].expected,'MATCH');assert.equal(snapshot.item.config.topics.length,2);
  await ui.flushDraft();const cloudWrite=calls.find(call=>call.path==='/api/studio/draft');assert.ok(cloudWrite);assert.equal(cloudWrite.body.key,'db-test-db:new');assert.equal(cloudWrite.body.payload.dirty,true);
- await emit(get('studioCheck'),'click');assert.ok(get('studioTests').textContent.includes('3 / 3'));
+ await emit(get('studioCheck'),'click');assert.ok(get('studioTests').textContent.includes('3 / 3'));assert.ok(get('studioTests').textContent.includes('Bạn muốn: Chặn'));assert.ok(get('studioTests').textContent.includes('Hệ thống khi bật chặn: Chặn'));assert.ok(!get('studioTests').textContent.includes('MATCH'));
+ // A plain answer changes manual example semantics without asking for a second role.
+ const manualCard=get('studioExamples').children[2],manualAnswer=manualCard.querySelectorAll('select')[0];manualAnswer.value='MATCH';await manualAnswer.onchange();assert.equal(ui.getDraft().item.examples[2].role,'violation');manualAnswer.value='NO_MATCH';await manualAnswer.onchange();assert.equal(ui.getDraft().item.examples[2].role,'counterexample');
+ const manualText=manualCard.querySelectorAll('textarea')[0];manualText.value='Hôm nay chúng mình cùng ôn bài và đọc sách nhé.';await emit(manualText,'input');assert.equal(ui.getDraft().item.examples[2].text,manualText.value);
  get('studioMode').value='block';await emit(get('studioPublish'),'click');assert.equal(liveItem.status,'published');assert.equal(liveItem.mode,'block');
  // Server example IDs must be sent back so source snapshots can remain immutable.
  await emit(get('studioCheck'),'click');let lastPreview=calls.filter(call=>call.path==='/api/studio/preview').at(-1);assert.equal(lastPreview.body.item.examples[0].id,100);
  assert.ok(get('studioItems').textContent.includes('3 ví dụ'));
- await ui.load('demo');assert.equal(get('demoBankState').textContent,'7 mục đã phát hành');
+ await ui.load('demo');assert.equal(get('demoBankState').textContent,'7 mục đang dùng');
  get('demoText').value='😀 Vào nhóm cá cược';await emit(get('demoForm'),'submit');assert.equal(get('demoHeadline').textContent,'Đề xuất chặn');assert.equal(get('demoAnnotatedText').querySelectorAll('mark')[0].textContent,'Vào nhóm');assert.ok(get('demoScopeNote').textContent.includes('fastText'));
+ // Explicit source answers are retained, and switching group cannot keep a Chặn answer for a negative source label.
+ const sourceRow={id:81,text:'Vào nhóm cá cược mới.',context:'',review:{id:91,decision:'VIOLATION',labels:{co_bac:1,spam:0}}};
+ apiHandler=(path,body)=>path.startsWith('/api/sample?id=')?sourceRow:defaultApi(path,body);
+ await ui.openSource(81,91);get('studioSourceExpected').value='MATCH';await emit(get('studioSourceExpected'),'change');assert.equal(ui.getDraft().source._example_expected,'MATCH');
+ get('studioCategory').value='spam';await emit(get('studioCategory'),'change');assert.equal(ui.getDraft().source._example_expected,undefined);assert.notEqual(get('studioSourceExpected').value,'MATCH');assert.equal(get('studioSourceExpected').children.find(option=>option.value==='MATCH').disabled,true);
+ get('studioCategory').value='co_bac';await emit(get('studioCategory'),'change');await emit(get('studioItemForm'),'submit');
+ const sourceExample=ui.getDraft().item.examples.find(ex=>ex.source_sample_id===81);assert.ok(sourceExample);const sourceExampleId=sourceExample.id;
+ get('studioSourceExpected').value='REVIEW';await emit(get('studioSourceExpected'),'change');assert.equal(ui.getDraft().item.examples.find(ex=>ex.id===sourceExampleId).expected,'REVIEW');assert.equal(ui.getDraft().item.examples.find(ex=>ex.id===sourceExampleId).role,'violation');
+ // Generate editable examples from current words and keep every existing saved example ID.
+ get('studioTopicInput').value='sòng bạc';await emit(get('studioAddTopic'),'click');const oldIds=ui.getDraft().item.examples.map(ex=>ex.id).filter(Boolean);await emit(get('studioGenerateExamples'),'click');for(const id of oldIds)assert.ok(ui.getDraft().item.examples.some(ex=>ex.id===id));assert.ok(get('studioEditorStatus').textContent.includes('Đã thêm'));
+ apiHandler=defaultApi;
  // Closing a session clears source/demo content and invalidates late responses.
  let finishOldDemo;apiHandler=(path,body)=>path==='/api/studio/demo'?new Promise(resolve=>{finishOldDemo=resolve}):defaultApi(path,body);
  const pending=emit(get('demoForm'),'submit');assert.equal(get('demoRun').disabled,true);ui.reset();context.currentUser={id:2,role:'member',display_name:'Member'};await ui.load('demo');finishOldDemo({decision:'BLOCK',explanation:'PRIVATE OLD RESPONSE',matches:[],checked_count:1});await pending;assert.equal(get('demoResult').hidden,true);assert.equal(get('demoRun').disabled,false);assert.ok(!get('demoExplanation').textContent.includes('PRIVATE'));

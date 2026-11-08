@@ -41,18 +41,18 @@ GUARD_PATTERNS = (
     ('uncertain_context', r'chưa rõ|hình như|giả sử|ví dụ'),
 )
 GUARD_REASONS = {
-    'negation': 'Có dấu hiệu phủ định; cần kiểm tra phạm vi trước khi chặn.',
-    'reported_context': 'Có dấu hiệu cảnh báo, phản đối hoặc thuật lại; cần xét ngữ cảnh.',
-    'quotation': 'Có lời trích dẫn hoặc dấu ngoặc kép; chưa xác định chắc ý của người viết.',
-    'mixed_context': 'Có các vế chuyển ý; cần kiểm tra quan hệ giữa các dấu hiệu.',
-    'uncertain_context': 'Có dấu hiệu giả định hoặc thông tin chưa rõ; cần xét tiếp.',
-    'external_context': 'Ngữ cảnh bổ sung có dấu hiệu cần đối chiếu trước khi chặn.',
-    'cross_clause': 'Dấu hiệu nội dung và hành vi nằm ở các vế/câu khác nhau.',
-    'distant_terms': 'Dấu hiệu nội dung và hành vi cách nhau xa; chưa đủ liên hệ để chặn nhanh.',
-    'partial_topic': 'Mới gặp dấu hiệu nội dung; chưa có hành vi đi kèm.',
-    'match_limit': 'Có quá nhiều dấu hiệu lặp trong bình luận; chuyển xét tiếp để tránh kết luận từ phần đối sánh bị giới hạn.',
+    'negation': 'Có từ phủ định như “đừng” hoặc “không”; cần người xem để tránh chặn nhầm.',
+    'reported_context': 'Câu có thể đang cảnh báo, phản đối hoặc kể lại lời người khác; cần người xem.',
+    'quotation': 'Có lời trong ngoặc kép; cần người xem vì đó có thể là lời được trích lại.',
+    'mixed_context': 'Câu có nhiều ý chuyển hướng; cần người xem để hiểu người viết đang mời gọi hay phản đối.',
+    'uncertain_context': 'Câu có ý giả định hoặc thông tin chưa rõ; cần người xem.',
+    'external_context': 'Thông tin đi kèm có thể làm đổi ý nghĩa của câu; cần người xem.',
+    'cross_clause': 'Từ về nội dung và lời mời hoặc hành động nằm ở hai câu/vế khác nhau; chưa chắc liên quan.',
+    'distant_terms': 'Từ về nội dung và lời mời hoặc hành động cách nhau xa; chưa đủ rõ để chặn.',
+    'partial_topic': 'Có từ về nội dung cần kiểm tra, nhưng chưa có lời mời hoặc hành động đi kèm.',
+    'match_limit': 'Câu lặp lại quá nhiều từ cần kiểm tra; chuyển cho người xem thay vì tự chặn.',
 }
-SCOPE_NOTE = ('Chỉ kiểm tra các mục Blacklist đã phát hành; chưa chạy fastText, '
+SCOPE_NOTE = ('Chỉ kiểm tra các mục đang bật trong kho; chưa chạy fastText, '
               'ViSoBERT/PhoBERT và chưa kết luận bình luận an toàn.')
 
 
@@ -180,9 +180,9 @@ def validate_definition(o):
         topics = _terms(config.get('topics', []), 'dấu hiệu nội dung')
         actions = _terms(config.get('actions', []), 'dấu hiệu hành vi')
         if not topics or not actions:
-            raise ValueError('Chọn ít nhất một dấu hiệu nội dung và một dấu hiệu hành vi.')
+            raise ValueError('Thêm một từ về nội dung (ví dụ: cá cược) và một lời mời hoặc hành động (ví dụ: vào nhóm).')
         if {normalize(x) for x in topics} & {normalize(x) for x in actions}:
-            raise ValueError('Dấu hiệu hành vi cần khác dấu hiệu nội dung.')
+            raise ValueError('Hai ô cần chứa từ khác nhau. Ví dụ: Nội dung là cá cược, lời mời là vào nhóm.')
         item['config'] = {'topics': topics, 'actions': actions, 'pattern': ''}
     else:
         pattern = _string(config.get('pattern', ''), 'cụm hoặc địa chỉ nhận diện',
@@ -209,7 +209,7 @@ def validate_definition(o):
         context = _string(example.get('context', ''), 'ngữ cảnh ví dụ', MAX_TEXT)
         expected = example.get('expected')
         if not isinstance(expected, str) or expected not in EXPECTED:
-            raise ValueError('Kết quả ví dụ cần là MATCH, REVIEW hoặc NO_MATCH.')
+            raise ValueError('Chọn cách xử lý cho câu ví dụ: Chặn, Cần người xem hoặc Cho đi tiếp.')
         total += len(text) + len(context)
         if total > MAX_EXAMPLE_CHARS:
             raise ValueError('Tổng nội dung ví dụ vượt giới hạn.')
@@ -408,7 +408,7 @@ def _evaluate(item, prepared):
     if kind == 'combined':
         topics, topics_limited = _find_terms(text, folded, spans, config['topics'], 'topic')
         if not topics:
-            result['reasons'] = ['Chưa gặp dấu hiệu nội dung của mục này.']
+            result['reasons'] = ['Câu chưa có từ về nội dung mà mục này đang tìm.']
             return result
         actions, actions_limited = _find_terms(text, folded, spans, config['actions'], 'action')
         if topics_limited or actions_limited:
@@ -433,7 +433,7 @@ def _evaluate(item, prepared):
     else:
         evidence = _address_matches(item, prepared)
     if not evidence:
-        result['reasons'] = ['Chưa gặp cụm hoặc địa chỉ nhận diện của mục này.']
+        result['reasons'] = ['Câu chưa có cụm từ hoặc địa chỉ mà mục này đang tìm.']
         return result
     ambiguities = list(dict.fromkeys(ambiguities + prepared['guards']))
     evidence += prepared['guard_evidence']
@@ -443,10 +443,10 @@ def _evaluate(item, prepared):
     if ambiguities or item.get('mode', 'signal') != 'block':
         result['result'] = 'REVIEW'
         if item.get('mode', 'signal') != 'block':
-            result['reasons'].append('Mục đang ở chế độ chỉ báo hiệu, chưa có quyền đề xuất chặn.')
+            result['reasons'].append('Mục này đang đặt Chỉ nhắc người duyệt nên không tự chặn.')
     else:
         result['result'] = 'MATCH'
-        result['reasons'] = ['Khớp đủ điều kiện từ ngữ trong phạm vi kiểm tra của mục.']
+        result['reasons'] = ['Câu có đủ các từ mục này đang tìm và chưa thấy dấu hiệu cần người xem.']
     return result
 
 
@@ -491,18 +491,18 @@ def evaluate_bank(items, text, context=''):
     if blockers:
         decision, next_stage = 'BLOCK', 'none'
         headline = 'Đề xuất chặn theo Blacklist'
-        explanation = ('Có ' + str(len(blockers)) + ' mục đã phát hành ở chế độ chặn khớp đủ điều kiện. '
-                       'Đây là kết quả bộ luật; cần giữ bước kiểm tra chặn nhầm khi tích hợp kiểm duyệt thực tế.')
+        explanation = ('Có ' + str(len(blockers)) + ' mục đang bật chặn tìm thấy đủ các từ cần kiểm tra. '
+                       'Đây là kết quả thử Blacklist; khi áp dụng thực tế vẫn cần bước kiểm tra chặn nhầm.')
     elif matches:
         decision, next_stage = 'REVIEW', 'fasttext'
-        headline = 'Có dấu hiệu — chuyển xét tiếp'
-        explanation = 'Có mục liên quan nhưng chưa đủ điều kiện chặn nhanh; chuyển fastText và các tầng xét ngữ cảnh.'
+        headline = 'Cần người xem thêm'
+        explanation = 'Câu có từ liên quan nhưng chưa rõ có nên chặn. Trong luồng đầy đủ, câu này cần được kiểm tra tiếp trước khi người duyệt quyết định.'
     else:
         decision, next_stage = 'NO_MATCH', 'fasttext'
-        headline = 'Chưa khớp Blacklist' if checked else 'Chưa có mục Blacklist được phát hành'
-        explanation = ('Chưa gặp điều kiện của các mục đang dùng; tiếp tục fastText. Không khớp Blacklist '
+        headline = 'Cho đi tiếp qua Blacklist' if checked else 'Kho chưa có mục đang bật'
+        explanation = ('Câu chưa có các từ mà kho đang tìm; cho đi tiếp sang bước kiểm tra sau. Kết quả này '
                        'chưa có nghĩa là bình luận an toàn.' if checked else
-                       'Hãy biên soạn, kiểm tra và phát hành một mục để thử. Kho trống chưa thể kết luận an toàn.')
+                       'Hãy tạo một mục, thử các câu ví dụ rồi bật vào kho để kiểm tra bình luận. Kho trống chưa thể kết luận an toàn.')
     return {'decision': decision, 'headline': headline, 'explanation': explanation,
             'matches': matches, 'checked_count': checked,
             'elapsed_ms': round((time.perf_counter() - started) * 1000, 3),

@@ -12,8 +12,8 @@ assert.throws(()=>S.saveRevision(saved.items,draft,false),/đã đổi/);
 const disabled={...clone(old),status:'disabled',version:2,_live:null,published_version:null};const restored=S.saveRevision([disabled],{...clone(old),version:2},false);assert.equal(restored.item._live,null);assert.equal(S.liveItems(restored.items).length,0);
 const stalePack=S.exportPack(state);stalePack.items[0].source_stale=true;const imported=S.importPack(stalePack);assert.equal(imported[0]._live.mode,'signal');assert.equal(E.evaluateBank(S.liveItems(imported),'Vào nhóm cá cược.').decision,'REVIEW');
 const staleSave=S.saveRevision(imported,{...clone(imported[0]),mode:'block'},true);assert.equal(staleSave.item._live.mode,'signal');
-assert.throws(()=>S.validatePublication({...old,examples:[old.examples[0]]}),/không khớp/);
-assert.throws(()=>S.validatePublication({...old,examples:[old.examples[0],{text:'Vào nhóm cá cược.',expected:'NO_MATCH',role:'counterexample'}]}),/chưa đúng/);
+assert.throws(()=>S.validatePublication({...old,examples:[old.examples[0]]}),/Cho đi tiếp/);
+assert.throws(()=>S.validatePublication({...old,examples:[old.examples[0],{text:'Vào nhóm cá cược.',expected:'NO_MATCH',role:'counterexample'}]}),/khác ý bạn/);
 assert.throws(()=>S.importPack({schema_version:1,items:[]}),/schema_version/);assert.throws(()=>E.validate({...old,id:0}),/id/);assert.throws(()=>E.validate({...old,category:'__proto__'}),/Nhóm/);assert.throws(()=>E.validate({...old,examples:Array.from({length:31},()=>old.examples[0])}),/30/);
 const long='a b '.repeat(1100),limit={...old,config:{topics:['a'],actions:['b']}};assert.equal(E.evaluateBank([limit],long).decision,'REVIEW');assert.ok(E.evaluateBank([limit],long).matches[0].ambiguities.includes('match_limit'));
 // Exact same recognition fixtures run against both implementations. No trained

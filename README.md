@@ -22,14 +22,14 @@ Màn giám sát có tiến độ từng người, số bình luận hoàn thành
 
 Admin sửa/xóa/khôi phục bình luận ở mục Quản lý bình luận. Mẫu đang có lượt giữ phải chờ xử lý xong. Xóa là lưu trữ, không xóa lịch sử. Nếu đổi nội dung/ngữ cảnh mẫu đã có nhãn, app lưu bản cũ và tạo mẫu thay thế cần gán nhãn lại. Luật blacklist liên quan được giữ để admin kiểm tra riêng. Tài khoản xóa có thể khôi phục; lịch sử gắn UID cố định qua các lần đổi tên.
 
-Hướng dẫn tài khoản: [ACCOUNT_WORKFLOW.md](ACCOUNT_WORKFLOW.md). Hướng dẫn gán nhãn → biên soạn → phát hành → thử bình luận: [STUDIO_GUIDE.md](STUDIO_GUIDE.md).
+Hướng dẫn tài khoản: [ACCOUNT_WORKFLOW.md](ACCOUNT_WORKFLOW.md). Hướng dẫn chọn từ → thử câu → bật vào kho: [STUDIO_GUIDE.md](STUDIO_GUIDE.md).
 
 ## Gán nhãn liên tục
 
 1. Mỗi người đăng nhập bằng tài khoản và mã do admin cấp. Bấm nhận bình luận tiếp theo trong phần được giao; server giữ riêng mẫu này 180 giây và gia hạn mỗi 30 giây khi còn kết nối. Người khác nhận câu khác.
 2. Chọn Có / Không / Chưa kiểm tra ở từng nhóm. Một câu có thể có nhiều nhóm vi phạm. Phím `1–9` bật/tắt nhãn Có; `N` xác nhận các nhóm còn lại không vi phạm; `U` chọn Cần xem lại; `F` bật chế độ tập trung. Phím tắt không chạy khi đang gõ trong trường nhập liệu.
 3. Chọn kết luận rồi Lưu & tiếp theo (`Ctrl/Cmd + Enter`). Server kiểm tra lượt giữ và phiên bản nhãn; gửi lại cùng thao tác không tạo lần duyệt trùng. Nút Bỏ qua chuyển sang mẫu khác, giữ nháp cũ.
-4. Có thể tích **Đánh dấu để biên soạn** cho câu đặc trưng hoặc câu dễ chặn nhầm, rồi **Lưu & tiếp theo**. Đây là đánh dấu nguồn để chọn dấu hiệu trong màn Biên soạn kho, chưa tạo hoặc bật luật. Bôi đen đoạn đáng chú ý là tùy chọn và được giữ làm gợi ý.
+4. Có thể tích **Gửi câu này sang kho Blacklist** cho câu đặc trưng hoặc câu dễ chặn nhầm, rồi **Lưu & tiếp theo**. Đây là gửi câu mẫu vào Kho Blacklist, chưa tạo hoặc bật cách chặn. Bôi đen đoạn đáng chú ý là tùy chọn và được giữ làm gợi ý.
 5. Nhãn chưa kiểm tra vẫn là `null`, xuất với `label_mask=0`; không tự đổi thành Không. Thao tác xác nhận các nhóm còn lại là hành động rõ ràng của người duyệt.
 
 Danh tính người duyệt lấy từ tài khoản đã xác thực; không nhận tên hay user_id tự khai từ trình duyệt. Giữ mẫu ngăn hai phiên cùng sửa một câu. Chỉ chạy một instance; xem giới hạn backup và lưu trữ trong tài liệu thiết lập.
@@ -64,21 +64,19 @@ Nháp giữ trên thiết bị và tự gửi lên server. Lưu nhãn xác nhậ
 
 Git lưu snapshot `snapshots/latest.sqlite3.gz` trong repo private riêng; khôi phục tự động nếu Render mất database. Không thể cam kết mọi ký tự đã lên Git khi mạng/server chết đột ngột; xem trạng thái đồng bộ và giữ bản tải về.
 
-## Biên soạn kho và demo kiểm tra bình luận
+## Kho Blacklist và thử bình luận
 
-Mở **Biên soạn kho** hoặc `/studio`. Chọn câu đã gán nhãn; bôi đen cụm rồi đưa vào **Nội dung / đối tượng** hoặc **Hành vi**. Gom vào mục đã có hoặc tạo mới, thêm các ví dụ vi phạm/đối chiếu rồi **Lưu nháp & tiếp theo**. Không phải viết regex, JSON hoặc điểm số. Có bộ ví dụ mô phỏng để điền thử, chỉ ghi dữ liệu khi bấm lưu.
+Mở **Kho Blacklist** hoặc `/studio`. Lần đầu, bấm **Điền mẫu cờ bạc** để có sẵn từ cần tìm và ba câu mẫu. Bấm **Thử các câu mẫu**, đọc **Bạn muốn / Khi bật chặn**. Admin chọn **Bật chặn** hoặc **Chỉ nhắc người duyệt**, rồi **Kiểm tra & bật vào kho**. [Hướng dẫn dùng từng bước](STUDIO_GUIDE.md).
 
-Các mục thuộc một nhóm/hành vi, không còn tự tạo một luật nguyên câu cho mỗi nhãn. Câu gốc là ví dụ có nguồn và phiên bản nhãn. Nháp giữ local theo tài khoản/database/phiên bản và đồng bộ bản đang soạn riêng; SQL backup chứa cả dữ liệu kho mới.
+Ví dụ: “Vào nhóm cá cược nhận thưởng” cần **Chặn**; “Đừng tham gia nhóm cá cược” cần **Cần người xem**; “Chúc mọi người vui vẻ” cần **Cho đi tiếp** qua bước Blacklist. Web không yêu cầu người dùng chọn mã kỹ thuật hay viết ví dụ theo một cú pháp riêng. Ví dụ là bài thử, không tự huấn luyện mô hình.
 
-Thành viên tạo/sửa nháp của mình; admin mới được kiểm tra và phát hành. **Chỉ báo hiệu** chuyển xét tiếp; **Đề xuất chặn** cho phép tầng Blacklist trả BLOCK nếu khớp đủ điều kiện. Phát hành cần ví dụ MATCH và NO_MATCH đạt kiểm tra; đây là kiểm tra cơ bản của mục, chưa phải số đo chất lượng trên bộ dữ liệu độc lập. Ngữ cảnh phủ định/trích dẫn/pha trộn được chuyển REVIEW. Đối sánh giữ dấu và vị trí bằng chứng; không tự cho phép một câu vì có chữ “đừng”.
+Từ dữ liệu thật: chọn một câu đã gán nhãn, lấy từ về nội dung và lời mời/hành động làm dấu hiệu. Câu gốc giữ làm ví dụ có nguồn và phiên bản nhãn. Thành viên tạo/sửa nháp của mình; admin mới được bật vào kho. Kiểm tra câu mẫu mô phỏng chế độ bật chặn; demo tuân theo chế độ thực tế của từng mục. Câu phủ định/trích dẫn/pha trộn được chuyển người xem, không tự cho phép chỉ vì có chữ “đừng”.
 
-Bản nháp sửa sau khi phát hành không đổi phiên bản đang chạy. Demo dùng bản phát hành đã ghim; **Thử mục đang biên soạn** dùng bản chưa phát hành và ghi rõ phạm vi. Tắt/lưu trữ dừng sử dụng mục; khôi phục về nháp phải phát hành lại. Nhãn nguồn bị sửa/trả lại hoặc bình luận bị lưu trữ khiến các mục phụ thuộc chuyển xét tiếp để kiểm tra lại.
+Bản nháp sửa sau khi bật không đổi phiên bản đang chạy. Tắt/lưu trữ dừng dùng mục; khôi phục về nháp cần kiểm tra và bật lại. Nhãn nguồn bị sửa/trả lại hoặc bình luận bị lưu trữ khiến mục liên quan chuyển người xem để kiểm tra lại. Kiểm tra vài câu mẫu chưa chứng minh độ chính xác trên dữ liệu thực tế.
 
-Có thêm `/sandbox/`: phòng thử độc lập, dùng kho mô phỏng hoặc pack JSON nhập vào, lưu cục bộ trên trình duyệt; không chia sẻ SQL/tài khoản và không tự cập nhật kho đang chạy.
+Mở **Thử bình luận** hoặc `/demo` để thử kho SQL dùng chung; có thể chọn thử riêng bản nháp. `/sandbox/` là phòng thử độc lập dùng kho mẫu hoặc JSON nhập vào, lưu cục bộ trong trình duyệt. fastText, ViSoBERT/PhoBERT và hệ thống chặn bình luận bên ngoài chưa được tích hợp. **Cho đi tiếp** chỉ nghĩa là qua bước Blacklist để tới các bước sau.
 
-Mở **Thử bình luận** hoặc `/demo`, nhập bình luận/ngữ cảnh, chọn **Kiểm tra bình luận**. Kết quả nêu BLOCK, REVIEW hoặc NO_MATCH cùng cụm khớp, lý do và phiên bản. NO_MATCH nghĩa là chưa khớp kho, cần chuyển fastText ở pipeline hoàn chỉnh. fastText, ViSoBERT/PhoBERT và hệ thống chặn ở website bên ngoài chưa tích hợp; demo này thực thi tầng luật Blacklist, không chạy ML hoặc gọi dịch vụ mô hình.
-
-Admin nhập/xuất kho mới ở màn biên soạn bằng `blacklist_pack.json`, `schema_version: 2`. File có bản hiện tại và các phiên bản đang phát hành để mang sang môi trường khác. Nhập lại luôn tạo nháp/chỉ báo hiệu, bỏ liên kết nguồn ngoại lai; phải kiểm tra trước khi phát hành. Không nhập pack v2 qua trình nhập luật cũ.
+Admin nhập/xuất kho bằng `blacklist_pack.json`, `schema_version: 2`. File giữ bản đang sửa và các phiên bản đang chạy. Nhập lại tạo nháp/chỉ nhắc người duyệt, bỏ liên kết nguồn ngoại lai; admin cần kiểm tra và bật lại. Không nhập pack v2 qua trình nhập luật cũ.
 
 Các API luật cũ vẫn giữ để dữ liệu trước nâng cấp không mất. Tệp cũ `blacklist.json` và `blacklist_drafts.json` là định dạng của engine trước, action REVIEW; chúng không thay cho pack v2.
 
@@ -99,6 +97,7 @@ node --check static/studio.js
 node test_ui.cjs
 node test_studio_ui.cjs
 node test_sandbox.cjs
+node test_sandbox_ui.cjs
 ```
 
 Backend kiểm tra workflow, đăng nhập và phân quyền, rollback, chống trùng, nhiều người nhận đồng thời, hết lượt, backup/restore và từ chối repo public/xung đột remote. Kiểm thử Node dùng DOM giả lập cho parser file, nháp, hoàn tác, giảm chuyển động và gửi lại sau khi server đổi phiên; không thay thế kiểm tra bố cục trên trình duyệt. test_parquet tạo file thật Snappy/Zstd/gzip, kiểm tra tải file hơn 32 MiB qua HTTP, chọn phạm vi dòng và chống trùng; không đưa dữ liệu khách hàng vào Git.

@@ -33,16 +33,16 @@ def _item_row(c,user,item_id,write=False):
  row=c.execute('SELECT * FROM studio_blacklist_items WHERE id=?',(_id(item_id),)).fetchone()
  if not row:raise ValueError('Không có mục Blacklist này.')
  if user['role']!='admin':
-  if row['created_by_user_id']!=user['id']:raise auth.Forbidden('Bạn chỉ xem và biên soạn các mục do mình tạo.')
-  if write and (row['status']!='draft' or row['published_version'] is not None):raise auth.Forbidden('Mục đã được admin phát hành; bạn chỉ được xem.')
+  if row['created_by_user_id']!=user['id']:raise auth.Forbidden('Bạn chỉ được xem và sửa các mục Blacklist do mình tạo.')
+  if write and (row['status']!='draft' or row['published_version'] is not None):raise auth.Forbidden('Admin đã bật mục này vào kho; bạn chỉ được xem.')
  return row
 def _source(c,user,sid,rid=None):
  auth.sample_access(c,user,_id(sid,'Mã bình luận'))
  sample=c.execute('SELECT * FROM samples WHERE id=?',(sid,)).fetchone()
  review=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(sid,)).fetchone()
  if not review or sample['needs_review']:raise ValueError('Bình luận cần có nhãn đã lưu và không đang bị trả lại để sửa.')
- if rid is not None and rid!=review['id']:raise Conflict('Nhãn nguồn đã thay đổi. Tải lại bình luận trước khi biên soạn.')
- if user['role']!='admin' and review['user_id']!=user['id']:raise auth.Forbidden('Chỉ biên soạn từ nhãn của bạn trong phần việc được giao.')
+ if rid is not None and rid!=review['id']:raise Conflict('Nhãn của bình luận đã đổi. Mở lại bình luận trước khi thêm vào Blacklist.')
+ if user['role']!='admin' and review['user_id']!=user['id']:raise auth.Forbidden('Chỉ thêm vào Blacklist từ các bình luận do bạn gắn nhãn trong phần việc được giao.')
  return sample,review
 def _existing_source_access(c,user,sid):
  # An admin must still be able to disable or archive a rule after its source
@@ -58,12 +58,12 @@ def _source_issue(c,example,category):
  latest=c.execute('SELECT * FROM reviews WHERE sample_id=? ORDER BY revision DESC LIMIT 1',(sid,)).fetchone()
  if not sample:return 'Bình luận nguồn không còn; cần kiểm tra lại ví dụ liên kết.'
  if sample['archived_at']:return 'Bình luận nguồn đã xóa, hoàn tác hoặc thay thế; cần kiểm tra lại mục trước khi chặn.'
- if sample['needs_review']:return 'Nhãn nguồn đang bị trả lại để sửa; mục chỉ báo hiệu trong lúc chờ kiểm tra.'
+ if sample['needs_review']:return 'Nhãn của bình luận đang bị trả lại để sửa; mục này chỉ nhắc người duyệt trong lúc chờ kiểm tra.'
  if not latest or latest['id']!=rid:return 'Nhãn nguồn đã có phiên bản mới; cần kiểm tra lại ví dụ liên kết.'
  if sample['text']!=example['text'] or sample['context']!=example.get('context',''):return 'Nội dung nguồn đã đổi; cần kiểm tra lại ví dụ liên kết.'
  labels=json.loads(latest['labels_json'])
  wanted=1 if example.get('role')=='violation' else 0
- if labels.get(category)!=wanted:return 'Nhãn nguồn chưa xác nhận đúng vai trò của ví dụ cho nhóm này.'
+ if labels.get(category)!=wanted:return 'Nhãn đã lưu của bình luận không phù hợp với cách bạn dùng câu này. Kiểm tra lại nhãn và câu ví dụ.'
  if wanted==1 and latest['decision']!='VIOLATION':return 'Nhãn nguồn chưa xác nhận vi phạm.'
  return None
 def _load(c,row,full=True):
@@ -139,8 +139,8 @@ def _examples(c,user,o,category,old=None,imported=False):
    if sid!=prior['source_sample_id'] or rid!=prior['source_review_id']:raise ValueError('Không đổi liên kết nguồn của ví dụ đã lưu. Xóa ví dụ và chọn nguồn mới nếu cần.')
   text=_text(raw.get('text',''),'Nội dung ví dụ');context=_text(raw.get('context',''),'Ngữ cảnh ví dụ')
   expected=raw.get('expected','MATCH');role=raw.get('role') or ('violation' if expected=='MATCH' else 'counterexample')
-  if expected not in ['MATCH','REVIEW','NO_MATCH'] or role not in ['violation','counterexample']:raise ValueError('Vai trò hoặc kết quả mong muốn của ví dụ không hợp lệ.')
-  if role=='counterexample' and expected=='MATCH':raise ValueError('Ví dụ đối chiếu cần Không khớp hoặc Cần xét tiếp, không phải Khớp đủ điều kiện.')
+  if expected not in ['MATCH','REVIEW','NO_MATCH'] or role not in ['violation','counterexample']:raise ValueError('Chọn cách xử lý cho mỗi câu ví dụ: Chặn, Cần người xem hoặc Cho đi tiếp.')
+  if role=='counterexample' and expected=='MATCH':raise ValueError('Câu này đang được lưu là không vi phạm. Chọn Cần người xem hoặc Cho đi tiếp; kiểm tra lại nhãn gốc nếu bạn muốn chặn.')
   kind='imported' if imported else 'manual';labels={}
   if sid:
    _id(sid,'Mã bình luận');_id(rid,'Mã nhãn nguồn')
@@ -156,7 +156,7 @@ def _examples(c,user,o,category,old=None,imported=False):
   elif prior and prior['source_kind']=='imported':kind='imported'
   if not text:raise ValueError('Nhập nội dung ví dụ hoặc chọn bình luận nguồn.')
   key=(text,context)
-  if key in seen:raise ValueError('Một ví dụ đang bị lặp trong mục; giữ một bản và chọn kết quả mong muốn.')
+  if key in seen:raise ValueError('Có hai câu ví dụ giống nhau. Xóa bớt một câu rồi chọn cách xử lý cho câu còn lại.')
   seen.add(key);clean.append({'text':text,'context':context,'expected':expected,'role':role,'source_kind':kind,'source_sample_id':sid,'source_review_id':rid,'source_labels':labels})
  return clean
 def _definition(c,user,o,old=None,imported=False):
@@ -172,9 +172,9 @@ def _fingerprint(item):
  return hashlib.sha256(dumps({'category':item['category'],'match_type':item['match_type'],'config':cfg}).encode()).hexdigest()
 def _tests(item):return context_rules.evaluate_examples(item)
 def _publication(c,item,tests):
- if not any(e['expected']=='MATCH' and e['role']=='violation' for e in item['examples']):raise ValueError('Để phát hành, cần một ví dụ vi phạm mong muốn Khớp đủ điều kiện.')
- if not any(e['expected']=='NO_MATCH' and e['role']=='counterexample' for e in item['examples']):raise ValueError('Để phát hành, cần một ví dụ đối chiếu mong muốn Không khớp; có thể thêm câu trung lập không chứa dấu hiệu.')
- if not all(t['passed'] for t in tests):raise ValueError('Có ví dụ chưa đạt kết quả mong muốn. Chạy thử và sửa điều kiện trước khi phát hành.')
+ if not any(e['expected']=='MATCH' and e['role']=='violation' for e in item['examples']):raise ValueError('Cần thêm một câu bạn muốn chặn rồi chọn Chặn. Ví dụ: Vào nhóm cá cược nhận thưởng ngay.')
+ if not any(e['expected']=='NO_MATCH' and e['role']=='counterexample' for e in item['examples']):raise ValueError('Cần thêm một câu bạn muốn cho đi tiếp rồi chọn Cho đi tiếp. Ví dụ: Chúc mọi người một ngày vui vẻ.')
+ if not all(t['passed'] for t in tests):raise ValueError('Có câu đang ra cách xử lý khác điều bạn chọn. Bấm Thử các câu mẫu, xem Bạn muốn và Hệ thống khi bật chặn, rồi sửa các từ cần tìm. Giữ cách xử lý theo ý bạn muốn; không cần chọn theo kết quả máy.')
  for example in item['examples']:
   issue=_source_issue(c,example,item['category'])
   if issue:raise Conflict(issue)
@@ -183,7 +183,7 @@ def save_item(c,user,o,stamp,_imported=False):
  iid=o.get('id');row=_item_row(c,user,iid,True) if iid else None;old=_load(c,row) if row else None
  if row and o.get('version')!=row['version']:raise Conflict('Mục vừa được người khác cập nhật. Tải lại để gộp; bản nháp của bạn vẫn được giữ.')
  item=_definition(c,user,o,old,_imported);status=item.get('status','draft')
- if user['role']!='admin' and status!='draft':raise auth.Forbidden('Thành viên chỉ được lưu bản nháp; admin mới được phát hành hoặc tắt mục.')
+ if user['role']!='admin' and status!='draft':raise auth.Forbidden('Thành viên chỉ được lưu nháp. Admin mới được bật hoặc tắt mục trong kho.')
  if status not in ['draft','published','disabled','archived']:raise ValueError('Trạng thái mục không hợp lệ.')
  tests=_tests(item)
  if status=='published':_publication(c,item,tests)
@@ -240,7 +240,7 @@ def preview(c,user,o):
  tests=_tests(item);text=_text(o.get('text',''),'Bình luận thử');context=_text(o.get('context',''),'Ngữ cảnh thử')
  simulated=dict(item,status='published');result=context_rules.evaluate_bank([simulated],text,context) if text else None
  if result:
-  result['scope_note']='Đang thử điều kiện của bản đang mở; chưa thay đổi kho đã phát hành.'
+  result['scope_note']='Đang thử riêng mục bạn đang mở. Thay đổi ở đây chỉ vào kho khi admin bấm Bật vào kho.'
  return {'item':item,'tests':tests,'result':result,'preview':True}
 def _published_items(c):
  """Resolve source freshness against the pinned revision, also for exports.
@@ -267,7 +267,7 @@ def demo(c,user,o):
   if rule_id in stale:
    match.setdefault('reasons',[]).extend(stale[rule_id]);match.setdefault('ambiguities',[]).append('source_changed')
  result['published_count']=len(items);result['pending_count']=count_stats(c,user)['draft'];result['stale_rule_count']=len(stale)
- result['scope_note']='Chỉ thử kho Blacklist đã phát hành. Không khớp nghĩa là chuyển fastText; demo chưa chạy fastText, ViSoBERT hoặc PhoBERT.'
+ result['scope_note']='Chỉ thử các mục đang bật trong kho. Cho đi tiếp nghĩa là qua bước Blacklist để kiểm tra tiếp; demo chưa chạy fastText, ViSoBERT hoặc PhoBERT.'
  return result
 def export_pack(c,user):
  auth.admin(user);items=[_load(c,row) for row in c.execute('SELECT * FROM studio_blacklist_items ORDER BY id')]
