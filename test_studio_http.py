@@ -46,7 +46,7 @@ class StudioHTTP(unittest.TestCase):
  def update(self,item,client=None,**changes):return (client or self.admin).call('/api/studio/item',dict(item,**changes))['item']
  def demo(self,text=None,client=None):return (client or self.admin).call('/api/studio/demo',{'text':text or self.invitation,'context':''})
  def test_static_auth_and_csrf_boundaries(self):
-  for path in ['/demo','/studio.js','/studio.css']:
+  for path in ['/demo','/studio.js','/studio.css','/sandbox/','/sandbox/app.js','/sandbox/engine.js','/sandbox/style.css']:
    with urlopen(self.server.base+path) as response:self.assertEqual(response.status,200)
   for path in ['/api/studio/items','/api/studio/sources','/export/blacklist_pack.json']:
    self.error(401,lambda path=path:urlopen(self.server.base+path))

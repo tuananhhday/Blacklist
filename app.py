@@ -219,8 +219,10 @@ class Handler(BaseHTTPRequestHandler):
   self.end_headers();self.wfile.write(data)
  def do_GET(self):
   parsed=urlsplit(self.path);path=parsed.path;query=parse_qs(parsed.query)
+  if path=='/sandbox':
+   self.send_response(302);self.send_header('Location','/sandbox/');self.end_headers();return
   if path=='/health':return self.reply({'status':'ok'})
-  public_files={'/':'index.html','/demo':'index.html','/studio':'index.html','/studio.js':'studio.js','/studio.css':'studio.css','/app.js':'app.js','/admin.js':'admin.js','/parquet.js':'parquet.js','/style.css':'style.css'}
+  public_files={'/sandbox/':'sandbox/index.html','/sandbox/index.html':'sandbox/index.html','/sandbox/app.js':'sandbox/app.js','/sandbox/engine.js':'sandbox/engine.js','/sandbox/style.css':'sandbox/style.css','/':'index.html','/demo':'index.html','/studio':'index.html','/studio.js':'studio.js','/studio.css':'studio.css','/app.js':'app.js','/admin.js':'admin.js','/parquet.js':'parquet.js','/style.css':'style.css'}
   if path in public_files:
    filename=public_files[path];ct='text/html' if filename.endswith('.html') else 'text/css' if path.endswith('.css') else 'text/javascript'
    return self.reply((ROOT/'static'/filename).read_text(encoding='utf8'),ctype=ct+'; charset=utf-8')

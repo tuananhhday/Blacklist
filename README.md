@@ -74,6 +74,8 @@ Thành viên tạo/sửa nháp của mình; admin mới được kiểm tra và 
 
 Bản nháp sửa sau khi phát hành không đổi phiên bản đang chạy. Demo dùng bản phát hành đã ghim; **Thử mục đang biên soạn** dùng bản chưa phát hành và ghi rõ phạm vi. Tắt/lưu trữ dừng sử dụng mục; khôi phục về nháp phải phát hành lại. Nhãn nguồn bị sửa/trả lại hoặc bình luận bị lưu trữ khiến các mục phụ thuộc chuyển xét tiếp để kiểm tra lại.
 
+Có thêm `/sandbox/`: phòng thử độc lập, dùng kho mô phỏng hoặc pack JSON nhập vào, lưu cục bộ trên trình duyệt; không chia sẻ SQL/tài khoản và không tự cập nhật kho đang chạy.
+
 Mở **Thử bình luận** hoặc `/demo`, nhập bình luận/ngữ cảnh, chọn **Kiểm tra bình luận**. Kết quả nêu BLOCK, REVIEW hoặc NO_MATCH cùng cụm khớp, lý do và phiên bản. NO_MATCH nghĩa là chưa khớp kho, cần chuyển fastText ở pipeline hoàn chỉnh. fastText, ViSoBERT/PhoBERT và hệ thống chặn ở website bên ngoài chưa tích hợp; demo này thực thi tầng luật Blacklist, không chạy ML hoặc gọi dịch vụ mô hình.
 
 Admin nhập/xuất kho mới ở màn biên soạn bằng `blacklist_pack.json`, `schema_version: 2`. File có bản hiện tại và các phiên bản đang phát hành để mang sang môi trường khác. Nhập lại luôn tạo nháp/chỉ báo hiệu, bỏ liên kết nguồn ngoại lai; phải kiểm tra trước khi phát hành. Không nhập pack v2 qua trình nhập luật cũ.
@@ -96,6 +98,7 @@ node --check static/parquet.js
 node --check static/studio.js
 node test_ui.cjs
 node test_studio_ui.cjs
+node test_sandbox.cjs
 ```
 
 Backend kiểm tra workflow, đăng nhập và phân quyền, rollback, chống trùng, nhiều người nhận đồng thời, hết lượt, backup/restore và từ chối repo public/xung đột remote. Kiểm thử Node dùng DOM giả lập cho parser file, nháp, hoàn tác, giảm chuyển động và gửi lại sau khi server đổi phiên; không thay thế kiểm tra bố cục trên trình duyệt. test_parquet tạo file thật Snappy/Zstd/gzip, kiểm tra tải file hơn 32 MiB qua HTTP, chọn phạm vi dòng và chống trùng; không đưa dữ liệu khách hàng vào Git.

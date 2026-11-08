@@ -88,3 +88,7 @@ Sau khi bản cập nhật được triển khai trên đúng service/nhánh, đ
 ### Dành cho người tích hợp
 
 Admin có thể nhập pack v2 qua `POST /api/studio/import` với body `{"pack": <nội dung pack>}` và session/CSRF hợp lệ. Không gửi pack v2 vào trình nhập luật cũ. API nhập luôn tạo nháp; dùng giao diện kiểm tra rồi phát hành.
+
+## Phòng thử độc lập
+
+Mở `/sandbox/` để thử ngay với kho mô phỏng, không cần đăng nhập. Có thể sửa và phát hành cục bộ hoặc nhập pack v2 từ web chính. Dữ liệu chỉ lưu trong trình duyệt trên thiết bị này; dùng tải JSON để giữ bản sao. Phòng thử độc lập không thay cho database dùng chung và tài khoản thành viên. `/demo` vẫn là màn thử đúng kho SQL đã phát hành của nhóm.
