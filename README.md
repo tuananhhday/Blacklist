@@ -22,14 +22,14 @@ Màn giám sát có tiến độ từng người, số bình luận hoàn thành
 
 Admin sửa/xóa/khôi phục bình luận ở mục Quản lý bình luận. Mẫu đang có lượt giữ phải chờ xử lý xong. Xóa là lưu trữ, không xóa lịch sử. Nếu đổi nội dung/ngữ cảnh mẫu đã có nhãn, app lưu bản cũ và tạo mẫu thay thế cần gán nhãn lại. Luật blacklist liên quan được giữ để admin kiểm tra riêng. Tài khoản xóa có thể khôi phục; lịch sử gắn UID cố định qua các lần đổi tên.
 
-Hướng dẫn thao tác: [ACCOUNT_WORKFLOW.md](ACCOUNT_WORKFLOW.md).
+Hướng dẫn tài khoản: [ACCOUNT_WORKFLOW.md](ACCOUNT_WORKFLOW.md). Hướng dẫn gán nhãn → biên soạn → phát hành → thử bình luận: [STUDIO_GUIDE.md](STUDIO_GUIDE.md).
 
 ## Gán nhãn liên tục
 
 1. Mỗi người đăng nhập bằng tài khoản và mã do admin cấp. Bấm nhận bình luận tiếp theo trong phần được giao; server giữ riêng mẫu này 180 giây và gia hạn mỗi 30 giây khi còn kết nối. Người khác nhận câu khác.
 2. Chọn Có / Không / Chưa kiểm tra ở từng nhóm. Một câu có thể có nhiều nhóm vi phạm. Phím `1–9` bật/tắt nhãn Có; `N` xác nhận các nhóm còn lại không vi phạm; `U` chọn Cần xem lại; `F` bật chế độ tập trung. Phím tắt không chạy khi đang gõ trong trường nhập liệu.
 3. Chọn kết luận rồi Lưu & tiếp theo (`Ctrl/Cmd + Enter`). Server kiểm tra lượt giữ và phiên bản nhãn; gửi lại cùng thao tác không tạo lần duyệt trùng. Nút Bỏ qua chuyển sang mẫu khác, giữ nháp cũ.
-4. Màn này chỉ chọn nhãn và kết luận. Với câu vi phạm đặc trưng, có thể bôi đen một đoạn rồi tích **Giữ làm mẫu Blacklist** rồi bấm **Lưu & tiếp theo**; nếu không bôi đen, nháp giữ nguyên câu nguồn. App lưu nhãn và chuyển sang câu tiếp theo. Thanh thông báo cũng cho gửi câu vi phạm vừa lưu vào Blacklist sau khi đã chuyển câu. Có thể hoàn tác thao tác chọn nhãn trước khi lưu.
+4. Có thể tích **Đánh dấu để biên soạn** cho câu đặc trưng hoặc câu dễ chặn nhầm, rồi **Lưu & tiếp theo**. Đây là đánh dấu nguồn để chọn dấu hiệu trong màn Biên soạn kho, chưa tạo hoặc bật luật. Bôi đen đoạn đáng chú ý là tùy chọn và được giữ làm gợi ý.
 5. Nhãn chưa kiểm tra vẫn là `null`, xuất với `label_mask=0`; không tự đổi thành Không. Thao tác xác nhận các nhóm còn lại là hành động rõ ràng của người duyệt.
 
 Danh tính người duyệt lấy từ tài khoản đã xác thực; không nhận tên hay user_id tự khai từ trình duyệt. Giữ mẫu ngăn hai phiên cùng sửa một câu. Chỉ chạy một instance; xem giới hạn backup và lưu trữ trong tài liệu thiết lập.
@@ -58,37 +58,44 @@ Nếu có mẫu đang được giữ hoặc luật blacklist đang bật từ đ
 
 ## SQL và backup
 
-`sql/schema.sql`: mẫu, lịch sử nhãn, luật và lịch sử luật. `sql/003_collaboration.sql`: lượt giữ mẫu, bản nháp, phiên bản kho và biên nhận chống lưu trùng. `sql/004_accounts.sql` và migration trong accounts.py: tài khoản, session, chia việc, thời gian xử lý và kiểm tra chất lượng. `sql/007_blacklist_proposals.sql` và migration trong accounts.py: bằng chứng, hành vi, ảnh chụp nhãn nguồn và khóa chống gửi nháp trùng. Bản ghi cũ giữ nguyên, không gán tài khoản hoặc thời gian giả cho dữ liệu trước nâng cấp. Migration chạy tự động, giữ nguyên bảng và dữ liệu cũ. Ghi dùng transaction `BEGIN IMMEDIATE`; SQLite WAL cho phép đọc khi có nhiều người thao tác. Database vẫn là SQLite, không phải MySQL.
+`sql/schema.sql`: mẫu, lịch sử nhãn, luật và lịch sử luật. `sql/003_collaboration.sql`: lượt giữ mẫu, bản nháp, phiên bản kho và biên nhận chống lưu trùng. `sql/004_accounts.sql` và migration trong accounts.py: tài khoản, session, chia việc, thời gian xử lý và kiểm tra chất lượng. `sql/008_blacklist_studio.sql`: các mục mới, ví dụ, phiên bản, bản đang phát hành, đánh dấu nguồn và nháp biên soạn. `sql/007_blacklist_proposals.sql` và migration trong accounts.py (tương thích luật cũ): bằng chứng, hành vi, ảnh chụp nhãn nguồn và khóa chống gửi nháp trùng. Bản ghi cũ giữ nguyên, không gán tài khoản hoặc thời gian giả cho dữ liệu trước nâng cấp. Migration chạy tự động, giữ nguyên bảng và dữ liệu cũ. Ghi dùng transaction `BEGIN IMMEDIATE`; SQLite WAL cho phép đọc khi có nhiều người thao tác. Database vẫn là SQLite, không phải MySQL.
 
 Nháp giữ trên thiết bị và tự gửi lên server. Lưu nhãn xác nhận ngay sau khi database commit; không chờ xuất SQL, nén snapshot hoặc GitHub. Một worker riêng gom backup, thử cách nhau khoảng 20 giây, không giữ khóa ghi trong lúc chờ mạng. Khi Git chậm/lỗi, thời gian đồng bộ có thể dài hơn. Nút Sao lưu Git ngay chủ động chờ GitHub xác nhận nhưng không khóa người khác lưu nhãn. Nếu Git chưa đồng bộ, bản nhãn vừa lưu vẫn giữ thêm trên thiết bị. Giao diện hiển thị riêng trạng thái nháp và Git. Có nút Sao lưu Git ngay và Tải nháp trên thiết bị.
 
 Git lưu snapshot `snapshots/latest.sqlite3.gz` trong repo private riêng; khôi phục tự động nếu Render mất database. Không thể cam kết mọi ký tự đã lên Git khi mạng/server chết đột ngột; xem trạng thái đồng bộ và giữ bản tải về.
 
-## Blacklist và xuất dữ liệu
+## Biên soạn kho và demo kiểm tra bình luận
 
-Ở màn gán nhãn chỉ có một nút lưu; tích **Giữ làm mẫu Blacklist** khi muốn gửi câu đặc trưng. Bôi đen đoạn vi phạm là tùy chọn; tên và nhóm lấy từ nguồn. Danh sách Blacklist mặc định hiển thị mẫu **Chờ admin duyệt**, có bộ lọc Đang bật/Đã tắt/Tất cả và xem ngay đoạn đặc trưng. Vào **Blacklist** để bổ sung **Hành vi / ngữ cảnh**, **Đoạn đặc trưng / bằng chứng** và **Ghi chú**. Hành vi dùng các nút chọn có chữ hiện sẵn; phần bổ sung thu gọn và không bắt buộc. Thành viên không phải nhập tên mẫu hoặc chọn lại nhóm vi phạm. Nháp giữ câu nguồn, phiên bản nhãn, các nhóm vi phạm và đoạn đã chọn. Mỗi nhóm Có tạo một nháp; gửi lại cùng phiên bản, nhóm và đoạn đặc trưng không tạo nháp trùng. Gửi từ nhãn đã lưu không tạo thêm lượt gán nhãn hoặc đổi số đo thời gian.
+Mở **Biên soạn kho** hoặc `/studio`. Chọn câu đã gán nhãn; bôi đen cụm rồi đưa vào **Nội dung / đối tượng** hoặc **Hành vi**. Gom vào mục đã có hoặc tạo mới, thêm các ví dụ vi phạm/đối chiếu rồi **Lưu nháp & tiếp theo**. Không phải viết regex, JSON hoặc điểm số. Có bộ ví dụ mô phỏng để điền thử, chỉ ghi dữ liệu khi bấm lưu.
 
-Thành viên chỉ sửa được nháp của mình trong phần được giao. Admin mới có phần cấu hình luật và quyền bật/tắt. Các nháp được tạo từ câu nguồn ở kiểu nguyên câu; đoạn bôi đen là bằng chứng để xây luật sau, chưa tự trở thành luật chặn theo từ khóa. Nếu nhãn nguồn đã đổi hoặc cần rà soát, nháp báo cần kiểm tra lại. Dữ liệu hành vi/bằng chứng và nguồn đi theo file xuất toàn bộ luật và SQL backup; nhập lại JSON giữ nguồn tham khảo nhưng không giả liên kết phiên bản nhãn của database khác.
+Các mục thuộc một nhóm/hành vi, không còn tự tạo một luật nguyên câu cho mỗi nhãn. Câu gốc là ví dụ có nguồn và phiên bản nhãn. Nháp giữ local theo tài khoản/database/phiên bản và đồng bộ bản đang soạn riêng; SQL backup chứa cả dữ liệu kho mới.
 
-Luật cũng có thể tạo thủ công. Nháp không được đưa vào blacklist đang bật. Muốn bật luật cần mẫu khớp và mẫu đối chiếu, các kiểm tra đều đạt; nhãn nguồn liên kết phải còn hợp lệ. Luật chỉ chuyển duyệt, không tự xóa/chặn.
+Thành viên tạo/sửa nháp của mình; admin mới được kiểm tra và phát hành. **Chỉ báo hiệu** chuyển xét tiếp; **Đề xuất chặn** cho phép tầng Blacklist trả BLOCK nếu khớp đủ điều kiện. Phát hành cần ví dụ MATCH và NO_MATCH đạt kiểm tra; đây là kiểm tra cơ bản của mục, chưa phải số đo chất lượng trên bộ dữ liệu độc lập. Ngữ cảnh phủ định/trích dẫn/pha trộn được chuyển REVIEW. Đối sánh giữ dấu và vị trí bằng chứng; không tự cho phép một câu vì có chữ “đừng”.
 
-Nhập blacklist JSON (`rules` hoặc mảng luật), CSV (`name,category,kind,pattern,reason`) hoặc TXT (mỗi dòng một nguyên câu). Mọi luật nhập thành nháp; mục trùng được bỏ qua. Tối đa 1.000 luật/lượt, file dưới 1,9 MB. Các nhóm dùng mã trong `sql/002_categories.sql`.
+Bản nháp sửa sau khi phát hành không đổi phiên bản đang chạy. Demo dùng bản phát hành đã ghim; **Thử mục đang biên soạn** dùng bản chưa phát hành và ghi rõ phạm vi. Tắt/lưu trữ dừng sử dụng mục; khôi phục về nháp phải phát hành lại. Nhãn nguồn bị sửa/trả lại hoặc bình luận bị lưu trữ khiến các mục phụ thuộc chuyển xét tiếp để kiểm tra lại.
 
-- `blacklist.json`: chỉ luật đang bật.
-- `blacklist_drafts.json`: toàn bộ luật, gồm nháp và đã tắt.
+Mở **Thử bình luận** hoặc `/demo`, nhập bình luận/ngữ cảnh, chọn **Kiểm tra bình luận**. Kết quả nêu BLOCK, REVIEW hoặc NO_MATCH cùng cụm khớp, lý do và phiên bản. NO_MATCH nghĩa là chưa khớp kho, cần chuyển fastText ở pipeline hoàn chỉnh. fastText, ViSoBERT/PhoBERT và hệ thống chặn ở website bên ngoài chưa tích hợp; demo này thực thi tầng luật Blacklist, không chạy ML hoặc gọi dịch vụ mô hình.
+
+Admin nhập/xuất kho mới ở màn biên soạn bằng `blacklist_pack.json`, `schema_version: 2`. File có bản hiện tại và các phiên bản đang phát hành để mang sang môi trường khác. Nhập lại luôn tạo nháp/chỉ báo hiệu, bỏ liên kết nguồn ngoại lai; phải kiểm tra trước khi phát hành. Không nhập pack v2 qua trình nhập luật cũ.
+
+Các API luật cũ vẫn giữ để dữ liệu trước nâng cấp không mất. Tệp cũ `blacklist.json` và `blacklist_drafts.json` là định dạng của engine trước, action REVIEW; chúng không thay cho pack v2.
+
+- `blacklist_pack.json`: kho mới có phiên bản, dùng chuyển dữ liệu biên soạn/kiểm tra.
 - `training_data.jsonl`: mẫu đã kết luận, nhãn và label_mask; chưa chia train/test.
-- `backup.sql`: toàn bộ SQLite gồm lịch sử và bản nháp. Không upload SQL qua web.
+- `backup.sql`: toàn bộ SQLite gồm tài khoản, nguồn, nhãn, các kho cũ/mới, lịch sử và nháp. Không upload SQL qua web.
 
-Phục hồi SQL thủ công: dừng app, giữ bản database cũ, tạo SQLite mới và chạy nội dung SQL từ bản sao tin cậy, kiểm tra rồi thay file. Không chạy SQL vào kho đang có dữ liệu. Không xóa disk/dữ liệu bản cũ trước khi xác nhận bản phục hồi.
+Phục hồi SQL thủ công: dừng app, giữ bản database cũ, tạo SQLite mới và chạy nội dung SQL từ bản sao tin cậy, kiểm tra rồi thay file. Không chạy SQL vào kho đang có dữ liệu. Không xóa dữ liệu bản cũ trước khi xác nhận bản phục hồi.
 
 ## Kiểm tra
 
 ```sh
-python -m unittest -v test_app test_render test_collaboration test_accounts test_parquet test_native_parquet test_import_history
+python -m unittest -v test_app test_render test_collaboration test_accounts test_parquet test_native_parquet test_import_history test_blacklist_workflow test_fast_save test_context_rules test_studio_http
 node --check static/app.js
 node --check static/admin.js
 node --check static/parquet.js
+node --check static/studio.js
 node test_ui.cjs
+node test_studio_ui.cjs
 ```
 
 Backend kiểm tra workflow, đăng nhập và phân quyền, rollback, chống trùng, nhiều người nhận đồng thời, hết lượt, backup/restore và từ chối repo public/xung đột remote. Kiểm thử Node dùng DOM giả lập cho parser file, nháp, hoàn tác, giảm chuyển động và gửi lại sau khi server đổi phiên; không thay thế kiểm tra bố cục trên trình duyệt. test_parquet tạo file thật Snappy/Zstd/gzip, kiểm tra tải file hơn 32 MiB qua HTTP, chọn phạm vi dòng và chống trùng; không đưa dữ liệu khách hàng vào Git.

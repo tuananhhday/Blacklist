@@ -13,6 +13,7 @@ from git_backup import GitBackup
 import parquet_import
 import import_history
 import blacklist_workflow
+import blacklist_store
 from native_parquet import NativeParquetImports,SCHEMA as NATIVE_IMPORT_SCHEMA
 
 ROOT=Path(__file__).resolve().parent
@@ -45,6 +46,7 @@ def init():
   c.execute("UPDATE parquet_import_runs SET state='paused',error='Server đã khởi động lại. Chọn lại file để tiếp tục từ phần đã lưu.' WHERE state='running'")
   c.execute("INSERT OR IGNORE INTO workspace_meta VALUES('database_id',?)",(uuid.uuid4().hex,))
   c.executemany('INSERT OR IGNORE INTO categories VALUES(?,?)',CATEGORIES.items())
+  blacklist_store.migrate(c)
 
 def require(ok,msg):
  if not ok: raise ValueError(msg)
@@ -141,6 +143,7 @@ def state(c,user=None,query=None):
  meta=dict(c.execute('SELECT key,value FROM workspace_meta'));backup=BACKUP.status(int(meta['version']))
  if user and user['role']=='member':backup={k:backup[k] for k in ['version','synced_version','configured','synced']}
  return {'categories':CATEGORIES,'samples':samples,'rules':rules,'claims':claims,'database_id':meta['database_id'],'backup':backup,
+  'studio_counts':blacklist_store.count_stats(c,user) if user else {},
   'stats':{'total':total,'pending':waiting,'done':total-waiting,'active_rules':sum(r['status']=='active' for r in rules),'draft_rules':sum(r['status']=='draft' for r in rules)},
   'queue':{'page':page,'page_size':size,'total':matched}}
 
@@ -217,15 +220,32 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   parsed=urlsplit(self.path);path=parsed.path;query=parse_qs(parsed.query)
   if path=='/health':return self.reply({'status':'ok'})
-  public_files={'/':'index.html','/app.js':'app.js','/admin.js':'admin.js','/parquet.js':'parquet.js','/style.css':'style.css'}
+  public_files={'/':'index.html','/demo':'index.html','/studio':'index.html','/studio.js':'studio.js','/studio.css':'studio.css','/app.js':'app.js','/admin.js':'admin.js','/parquet.js':'parquet.js','/style.css':'style.css'}
   if path in public_files:
-   filename=public_files[path];ct='text/html' if path=='/' else 'text/css' if path.endswith('.css') else 'text/javascript'
+   filename=public_files[path];ct='text/html' if filename.endswith('.html') else 'text/css' if path.endswith('.css') else 'text/javascript'
    return self.reply((ROOT/'static'/filename).read_text(encoding='utf8'),ctype=ct+'; charset=utf-8')
   if not self.authorized():return
   try:
    if path.startswith('/api/admin/') or path in ['/api/history','/api/backup/status'] or path.startswith('/export/'):auth.admin(self.user)
    if path=='/api/state':
     with connect() as c:self.reply(state(c,self.user,query))
+   elif path=='/api/studio/items':
+    with connect() as c:self.reply(blacklist_store.list_items(c,auth.public(self.user),query))
+   elif path=='/api/studio/draft':
+    raw=query.get('client_id',[''])[0]
+    require(bool(re.fullmatch(r'[a-f0-9]{32,64}',raw)),'Thiếu mã phiên biên soạn.')
+    client=hashlib.sha256((str(self.user['id'])+':'+raw).encode()).hexdigest()
+    with connect() as c:self.reply(blacklist_store.get_editor_draft(c,auth.public(self.user),query.get('key',['new'])[0],client))
+   elif path=='/api/studio/item':
+    with connect() as c:self.reply({'item':blacklist_store.get_item(c,auth.public(self.user),int(query.get('id',['0'])[0]))})
+   elif path=='/api/studio/sources':
+    with connect() as c:self.reply(blacklist_store.sources(c,auth.public(self.user),query))
+   elif path=='/api/studio/history':
+    with connect() as c:self.reply(blacklist_store.history(c,auth.public(self.user),int(query.get('id',['0'])[0])))
+   elif path=='/export/blacklist_pack.json':
+    with connect() as c:
+     c.execute('BEGIN')
+     self.reply(blacklist_store.export_pack(c,auth.public(self.user)),filename='blacklist_pack.json')
    elif path=='/api/sample':
     with connect() as c:
      sid=int(query.get('id',['0'])[0]);auth.sample_access(c,self.user,sid)
@@ -294,6 +314,11 @@ class Handler(BaseHTTPRequestHandler):
    if path.startswith('/api/parquet/'):
     with MUTATION_LOCK:result=PARQUET.action(path,self.user['id'],o)
     return self.reply(result)
+   if path in ['/api/studio/preview','/api/studio/demo']:
+    with connect() as c:
+     c.execute('BEGIN')
+     result=(blacklist_store.preview if path.endswith('/preview') else blacklist_store.demo)(c,auth.public(self.user),o)
+    return self.reply(result)
    raw_client=o.get('client_id','')
    require(isinstance(raw_client,str) and bool(re.fullmatch(r'[a-f0-9]{32,64}',raw_client)),'Thiếu mã phiên làm việc.')
    o['client_id']=hashlib.sha256((str(self.user['id'])+':'+raw_client).encode()).hexdigest()
@@ -355,10 +380,23 @@ class Handler(BaseHTTPRequestHandler):
      c.execute('UPDATE reviews SET user_id=?,attempt_id=?,elapsed_ms=?,active_ms=?,fast_flag=?,threshold_ms=? WHERE id=?',(self.user['id'],timing['attempt_id'],timing['elapsed_ms'],timing['active_ms'],timing['fast_flag'],timing['threshold_ms'],cursor.lastrowid))
      c.execute('UPDATE samples SET needs_review=0 WHERE id=?',(sid,))
      c.execute("UPDATE task_assignments SET state='done' WHERE sample_id=?",(sid,))
+     if o.get('mark_curation') is True:
+      require(decision!='UNSURE','Chỉ đánh dấu nguồn sau khi đã có kết luận rõ; có thể giữ nháp để kiểm tra thêm.')
+      result['curation_bookmark']=blacklist_store.bookmark(c,auth.public(self.user),{'sample_id':sid,'review_id':cursor.lastrowid,'marked':True,'candidate_evidence':o.get('candidate_evidence','')},now())
      if o.get('propose_rule') is True and decision=='VIOLATION':
       result.update(blacklist_workflow.propose(c,auth.public(self.user),{'sample_id':sid,'review_id':cursor.lastrowid,'candidate_evidence':o.get('candidate_evidence','')},now()))
      c.execute('DELETE FROM work_drafts WHERE owner=? AND sample_id=?',(work.owner(o),sid))
      c.execute('DELETE FROM work_claims WHERE sample_id=?',(sid,))
+    elif path=='/api/studio/draft':
+     result=blacklist_store.save_editor_draft(c,auth.public(self.user),o,now());changed=result.get('changed',True)
+    elif path=='/api/studio/draft/delete':
+     result=blacklist_store.delete_editor_draft(c,auth.public(self.user),o);changed=result.get('changed',True)
+    elif path=='/api/studio/bookmark':
+     result=blacklist_store.bookmark(c,auth.public(self.user),o,now());changed=True
+    elif path=='/api/studio/item':
+     result=blacklist_store.save_item(c,auth.public(self.user),o,now());changed=True
+    elif path=='/api/studio/import':
+     auth.admin(self.user);result=blacklist_store.import_pack(c,auth.public(self.user),o,now());changed=True
     elif path=='/api/blacklist/propose':
      result=blacklist_workflow.propose(c,auth.public(self.user),o,now());changed=any(p['created'] for p in result['proposals'])
     elif path=='/api/rule':
