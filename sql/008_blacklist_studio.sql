@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS studio_blacklist_examples(
  source_sample_id INTEGER REFERENCES samples(id),
  source_review_id INTEGER REFERENCES reviews(id),
  source_labels_json TEXT NOT NULL DEFAULT '{}',
+ annotation_json TEXT NOT NULL DEFAULT '{}',
  created_at TEXT NOT NULL,
  UNIQUE(item_id,text,context)
 );

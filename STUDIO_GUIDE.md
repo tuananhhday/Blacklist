@@ -1,4 +1,24 @@
-# Dùng Blacklist: chọn từ, thử câu, bật vào kho
+# Đánh dấu chữ để tạo Blacklist
+
+Mở một bình luận nguồn, hoặc bấm **Điền mẫu cờ bạc**. Ngay trên câu mẫu:
+
+1. Chọn câu đang **mời gọi**, **mua bán**, **đe dọa**, **khuyên tránh**, **kể lại**, **chưa rõ** hay **không liên quan**. Đây là cách phân loại để lưu và lọc; không phải máy đã tự hiểu toàn bộ câu.
+2. Chọn màu, rồi **bấm từ đầu và từ cuối** của đoạn. Chỉ lấy một từ thì bấm từ đó hai lần. Dấu có thể bỏ bằng nút ×, rồi đánh lại.
+3. Bấm **Dùng các đoạn đã chọn cho cách chặn này**, đọc phần giải thích điều kiện, rồi **Thử các câu mẫu**. Admin kiểm tra trước khi bật vào kho.
+
+| Màu / vai trò | Đánh dấu gì? | Ví dụ |
+| --- | --- | --- |
+| Tím · Nội dung | Điều đang được nói tới | **cá cược** |
+| Cam · Hành động vi phạm | Lời mời, giao dịch hoặc hành động cụ thể | **vào nhóm**, **nạp tiền**, **mua bán** |
+| Vàng · Tránh chặn nhầm | Đoạn làm đổi ý nghĩa cả câu | **đừng**, **cảnh báo**, **nó nói** |
+
+**“Vào nhóm cá cược”** có tím + cam, nên có thể chặn khi mục được bật chặn. **“Đừng vào nhóm cá cược”** thêm vàng, nên chuyển người xem. Từ màu vàng không phải giấy phép tự cho qua: “Đừng bỏ lỡ, vào nhóm cá cược ngay” vẫn cần kiểm tra.
+
+Dấu được lưu nguyên văn và vị trí cùng trường hợp của câu. Khi sửa nội dung câu mẫu, dấu cũ được xóa để bạn đánh lại. Câu lấy từ dữ liệu thật giữ nguyên nội dung và nhãn gốc. Chọn trường hợp mời gọi trên câu gốc không vi phạm không tự đổi nhãn hay cho phép nó thành ví dụ cần chặn.
+
+Các đoạn chỉ được thêm vào điều kiện khi bấm **Dùng các đoạn đã chọn**. Bỏ một dấu trên câu không tự xóa điều kiện đã dùng chung cho các câu khác; mở **Xem / sửa các đoạn đang dùng làm điều kiện** rồi bấm × để bỏ đoạn khỏi điều kiện. Mỗi mục giữ một kiểu vi phạm; nên tách mời tham gia và mua bán thành các mục riêng. Lọc **Xem câu theo trường hợp** để kiểm tra từng nhóm.
+
+Các cách dùng tiếp theo:
 
 **Blacklist là danh sách cách nhận ra câu cần chặn.** Ví dụ, một mục tìm từ **“cá cược”** đi cùng lời mời **“vào nhóm”**. Nó không lấy cả câu bình luận làm một từ cấm.
 

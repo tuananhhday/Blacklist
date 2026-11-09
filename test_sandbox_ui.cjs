@@ -33,7 +33,7 @@ const get=id=>{assert.ok(ids[id],'Missing HTML ID '+id);return ids[id]};
 const document={getElementById:get,createElement:tag=>new Element(tag),createTextNode:text=>new Element('#text',text),querySelectorAll:selector=>root.querySelectorAll(selector),body:root.querySelectorAll('body')[0],addEventListener:(name,fn)=>(events[name]??=[]).push(fn)};
 const memory=storage(),notices=[],browserEvents={};
 const context={console,document,localStorage:memory,URL,URLSearchParams,Blob,Date,Promise,performance,setTimeout:fn=>{timers.set(++timerSequence,fn);return timerSequence},clearTimeout:id=>timers.delete(id),confirm:()=>true,location:{hash:'#bank'},history:{replaceState(){}},window:{addEventListener:(name,fn)=>(browserEvents[name]??=[]).push(fn)}};
-vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/sandbox/engine.js','utf8'),context);vm.runInContext(fs.readFileSync(__dirname+'/static/sandbox/app.js','utf8'),context);
+vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/sandbox/phrase_marker.js','utf8'),context);vm.runInContext(fs.readFileSync(__dirname+'/static/sandbox/engine.js','utf8'),context);vm.runInContext(fs.readFileSync(__dirname+'/static/sandbox/app.js','utf8'),context);
 async function emit(element,event,extra={}){const e={preventDefault(){},target:element,...extra};for(const listener of element.listeners[event]||[])await listener(e);if(element['on'+event])await element['on'+event](e)}
 (async()=>{
  await emit(get('newItem'),'click');await emit(get('fillStarter'),'click');

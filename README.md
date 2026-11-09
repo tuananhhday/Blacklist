@@ -66,6 +66,8 @@ Git lưu snapshot `snapshots/latest.sqlite3.gz` trong repo private riêng; khôi
 
 ## Kho Blacklist và thử bình luận
 
+Bản mới có đánh dấu chữ trên câu: tím là nội dung, cam là hành động, vàng là dấu tránh chặn nhầm. Bấm từ đầu và từ cuối để chọn đoạn, rồi dùng các đoạn đó làm điều kiện. Trường hợp câu và vị trí nguyên văn được lưu trong `annotation_json` (migration thêm cột, giữ dữ liệu cũ); `config.cautions` làm câu có dấu hiệu liên quan chuyển người xem, không tự cho qua. Có lọc câu theo trường hợp; [hướng dẫn đánh dấu](STUDIO_GUIDE.md).
+
 Mở **Kho Blacklist** hoặc `/studio`. Lần đầu, bấm **Điền mẫu cờ bạc** để có sẵn từ cần tìm và ba câu mẫu. Bấm **Thử các câu mẫu**, đọc **Bạn muốn / Khi bật chặn**. Admin chọn **Bật chặn** hoặc **Chỉ nhắc người duyệt**, rồi **Kiểm tra & bật vào kho**. [Hướng dẫn dùng từng bước](STUDIO_GUIDE.md).
 
 Ví dụ: “Vào nhóm cá cược nhận thưởng” cần **Chặn**; “Đừng tham gia nhóm cá cược” cần **Cần người xem**; “Chúc mọi người vui vẻ” cần **Cho đi tiếp** qua bước Blacklist. Web không yêu cầu người dùng chọn mã kỹ thuật hay viết ví dụ theo một cú pháp riêng. Ví dụ là bài thử, không tự huấn luyện mô hình.
@@ -89,7 +91,7 @@ Phục hồi SQL thủ công: dừng app, giữ bản database cũ, tạo SQLite
 ## Kiểm tra
 
 ```sh
-python -m unittest -v test_app test_render test_collaboration test_accounts test_parquet test_native_parquet test_import_history test_blacklist_workflow test_fast_save test_context_rules test_studio_http
+python -m unittest -v test_app test_render test_collaboration test_accounts test_parquet test_native_parquet test_import_history test_blacklist_workflow test_fast_save test_context_rules test_studio_http test_marking
 node --check static/app.js
 node --check static/admin.js
 node --check static/parquet.js

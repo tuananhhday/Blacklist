@@ -36,7 +36,7 @@ const document={getElementById:get,createElement:tag=>new Element(tag),createTex
 const currentState={database_id:'test-db',categories:{co_bac:'Cờ bạc',spam:'Spam'}};
 const calls=[],notices=[];let apiHandler;
 const context={console,assert,document,localStorage:storage(),URL,URLSearchParams,Blob,Date,Promise,setTimeout:fn=>{timers.set(++timerSequence,fn);return timerSequence},clearTimeout:id=>timers.delete(id),currentUser:{id:1,role:'admin',display_name:'Admin'},state:currentState,clientId:'a'.repeat(32),confirm:()=>true,node:(tag,text,cls)=>{const e=new Element(tag,text===undefined?'':String(text));e.className=cls||'';return e},notice:(...args)=>notices.push(args),backupUI:()=>{},api:async(path,body)=>{calls.push({path,body:body===undefined?undefined:JSON.parse(JSON.stringify(body))});return apiHandler(path,body)},window:{addEventListener:(name,fn)=>(events[name]??=[]).push(fn),getSelection:()=>null},tab:name=>{document.body.dataset.view=name;get('studio').hidden=name!=='studio';get('demo').hidden=name!=='demo'}};
-vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/studio.js','utf8'),context);
+vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/phrase_marker.js','utf8'),context);vm.runInContext(fs.readFileSync(__dirname+'/static/studio.js','utf8'),context);
 async function emit(element,event,extra={}){const eventObject={preventDefault(){},target:element,...extra};for(const listener of element.listeners[event]||[])await listener(eventObject);if(event==='click'&&element.onclick)await element.onclick(eventObject)}
 const ui=context.window.studioUi;
 let serverDraft=null,liveItem=null,sourceRows=[];
@@ -56,6 +56,12 @@ apiHandler=defaultApi;
 (async()=>{
  await ui.load('studio');await emit(get('studioFillTemplate'),'click');
  let snapshot=ui.getDraft();assert.equal(snapshot.item.examples[0].context,'');assert.equal(snapshot.item.examples[0].expected,'MATCH');assert.equal(snapshot.item.config.topics.length,2);
+ // Marking a literal warning span must feed the real condition, preserving case metadata.
+ const warningMarker=get('studioExamples').children[1].querySelectorAll('.phrase-marker')[0];
+ const roleButtons=warningMarker.querySelectorAll('.pm-role');await roleButtons[2].onclick();
+ let words=warningMarker.querySelectorAll('.pm-word');await words[0].onclick();words=warningMarker.querySelectorAll('.pm-word');await words[0].onclick();
+ await warningMarker.querySelectorAll('.pm-apply')[0].onclick();assert.ok(ui.getDraft().item.config.cautions.includes('Đừng'));assert.equal(ui.getDraft().item.examples[1].annotation.case,'warning');
+ get('studioExampleCaseFilter').value='warning';await emit(get('studioExampleCaseFilter'),'change');assert.equal(get('studioExamples').children.length,1);get('studioExampleCaseFilter').value='all';await emit(get('studioExampleCaseFilter'),'change');
  await ui.flushDraft();const cloudWrite=calls.find(call=>call.path==='/api/studio/draft');assert.ok(cloudWrite);assert.equal(cloudWrite.body.key,'db-test-db:new');assert.equal(cloudWrite.body.payload.dirty,true);
  await emit(get('studioCheck'),'click');assert.ok(get('studioTests').textContent.includes('3 / 3'));assert.ok(get('studioTests').textContent.includes('Bạn muốn: Chặn'));assert.ok(get('studioTests').textContent.includes('Hệ thống khi bật chặn: Chặn'));assert.ok(!get('studioTests').textContent.includes('MATCH'));
  // A plain answer changes manual example semantics without asking for a second role.

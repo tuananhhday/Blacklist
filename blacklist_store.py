@@ -14,7 +14,10 @@ PAGE_SIZE=30
 MAX_EXAMPLES=30
 
 def dumps(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,allow_nan=False)
-def migrate(c):c.executescript(SCHEMA)
+def migrate(c):
+ c.executescript(SCHEMA)
+ if 'annotation_json' not in [row[1] for row in c.execute('PRAGMA table_info(studio_blacklist_examples)')]:
+  c.execute("ALTER TABLE studio_blacklist_examples ADD COLUMN annotation_json TEXT NOT NULL DEFAULT '{}'")
 def _value(o,key,default=''):
  value=o.get(key,default)
  return value[0] if isinstance(value,list) and value else default if isinstance(value,list) else value
@@ -71,7 +74,7 @@ def _load(c,row,full=True):
  result['config']=json.loads(row['config_json']);result['has_pending_changes']=row['published_version'] is not None and row['published_version']!=row['version']
  examples=[]
  for source in c.execute('SELECT * FROM studio_blacklist_examples WHERE item_id=? ORDER BY id',(row['id'],)):
-  e=dict(source);e.pop('item_id');e.pop('created_at');e['source_labels']=json.loads(e.pop('source_labels_json'));issue=_source_issue(c,e,row['category']);e['source_stale']=bool(issue);e['source_warning']=issue;examples.append(e)
+  e=dict(source);e.pop('item_id');e.pop('created_at');e['annotation']=json.loads(e.pop('annotation_json'));e['source_labels']=json.loads(e.pop('source_labels_json'));issue=_source_issue(c,e,row['category']);e['source_stale']=bool(issue);e['source_warning']=issue;examples.append(e)
  result['example_count']=len(examples);result['violation_count']=sum(e['role']=='violation' for e in examples);result['counterexample_count']=sum(e['role']=='counterexample' for e in examples);result['source_stale']=any(e['source_stale'] for e in examples)
  if full:result['examples']=examples
  return result
@@ -157,7 +160,7 @@ def _examples(c,user,o,category,old=None,imported=False):
   if not text:raise ValueError('Nhập nội dung ví dụ hoặc chọn bình luận nguồn.')
   key=(text,context)
   if key in seen:raise ValueError('Có hai câu ví dụ giống nhau. Xóa bớt một câu rồi chọn cách xử lý cho câu còn lại.')
-  seen.add(key);clean.append({'text':text,'context':context,'expected':expected,'role':role,'source_kind':kind,'source_sample_id':sid,'source_review_id':rid,'source_labels':labels})
+  seen.add(key);clean.append({'text':text,'context':context,'expected':expected,'role':role,'source_kind':kind,'source_sample_id':sid,'source_review_id':rid,'source_labels':labels,'annotation':context_rules.validate_annotation(raw.get('annotation'),text)})
  return clean
 def _definition(c,user,o,old=None,imported=False):
  clean=context_rules.validate_definition(o)
@@ -166,6 +169,7 @@ def _definition(c,user,o,old=None,imported=False):
  return clean
 def _fingerprint(item):
  cfg=dict(item['config'])
+ if cfg.get('cautions'):cfg['cautions']=sorted(set(context_rules.normalize(term) for term in cfg['cautions']))
  if item['match_type']=='combined':
   for key in ['topics','actions']:cfg[key]=sorted(set(context_rules.normalize(term) for term in cfg[key]))
  elif item['match_type']=='phrase':cfg['pattern']=context_rules.normalize(cfg['pattern'])
@@ -195,7 +199,7 @@ def save_item(c,user,o,stamp,_imported=False):
  else:iid=c.execute('INSERT INTO studio_blacklist_items(name,category,match_type,mode,status,version,config_json,definition_hash,updated_by_user_id,updated_at,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',values+(user['id'],stamp)).lastrowid
  if row and row['status'] in ['disabled','archived'] and status=='draft':c.execute('UPDATE studio_blacklist_items SET published_version=NULL,published_snapshot_json=NULL,published_at=NULL WHERE id=?',(iid,))
  c.execute('DELETE FROM studio_blacklist_examples WHERE item_id=?',(iid,))
- for e in item['examples']:c.execute('INSERT INTO studio_blacklist_examples(item_id,text,context,expected,role,source_kind,source_sample_id,source_review_id,source_labels_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(iid,e['text'],e['context'],e['expected'],e['role'],e['source_kind'],e['source_sample_id'],e['source_review_id'],dumps(e['source_labels']),stamp))
+ for e in item['examples']:c.execute('INSERT INTO studio_blacklist_examples(item_id,text,context,expected,role,source_kind,source_sample_id,source_review_id,source_labels_json,created_at,annotation_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(iid,e['text'],e['context'],e['expected'],e['role'],e['source_kind'],e['source_sample_id'],e['source_review_id'],dumps(e['source_labels']),stamp,dumps(e['annotation'])))
  current=_load(c,c.execute('SELECT * FROM studio_blacklist_items WHERE id=?',(iid,)).fetchone())
  if status=='published':
   current['published_version']=version;current['published_at']=stamp;current['has_pending_changes']=False

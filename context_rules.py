@@ -118,6 +118,31 @@ def _terms(values, name):
     return cleaned
 
 
+GUARD_REASONS['custom_caution'] = 'Có đoạn bạn đã đánh dấu để tránh chặn nhầm; chuyển người xem, không tự cho qua.'
+
+CASE_NAMES = {'invite','sell','attack','warning','report','unclear','neutral','unspecified'}
+
+def validate_annotation(raw, text):
+    if raw is None: raw = {}
+    if not isinstance(raw, dict) or not isinstance(raw.get('case','unspecified'),str) or raw.get('case', 'unspecified') not in CASE_NAMES:
+        raise ValueError('Chọn trường hợp của câu bình luận.')
+    marks = raw.get('marks', [])
+    if not isinstance(marks, list) or len(marks) > 80:
+        raise ValueError('Mỗi câu tối đa 80 đoạn đánh dấu.')
+    clean = []
+    for mark in marks:
+        if not isinstance(mark, dict): raise ValueError('Đoạn đánh dấu không hợp lệ.')
+        a, b, role = mark.get('start'), mark.get('end'), mark.get('role')
+        if type(a) is not int or type(b) is not int or not 0 <= a < b <= len(text) or b-a > 160:
+            raise ValueError('Chọn đoạn ngắn nằm trong câu, tối đa 160 ký tự.')
+        if role not in ['topic','action','caution'] or mark.get('text') != text[a:b] or not text[a:b].strip():
+            raise ValueError('Chữ đã đánh dấu không còn khớp câu. Hãy đánh dấu lại sau khi sửa câu.')
+        if any(a < m['end'] and b > m['start'] for m in clean):
+            raise ValueError('Một đoạn chữ chỉ có một vai trò. Bỏ dấu cũ trước khi chọn lại.')
+        clean.append({'start': a, 'end': b, 'text': text[a:b], 'role': role})
+    return {'case': raw.get('case','unspecified'), 'marks': sorted(clean,key=lambda m:m['start'])}
+
+
 def _host(value):
     value = value.rstrip('.').casefold()
     try:
@@ -198,6 +223,8 @@ def validate_definition(o):
         elif not any(char.isalnum() for char in pattern):
             raise ValueError('Cụm nhận diện cần có chữ hoặc số.')
         item['config'] = {'topics': [], 'actions': [], 'pattern': unicodedata.normalize('NFC', pattern)}
+    cautions = _terms(config.get('cautions', []), 'từ cần tránh chặn nhầm')
+    if cautions: item['config']['cautions'] = cautions
     examples = o.get('examples', [])
     if not isinstance(examples, list) or len(examples) > MAX_EXAMPLES:
         raise ValueError('Tối đa ' + str(MAX_EXAMPLES) + ' ví dụ cho một mục.')
@@ -213,7 +240,7 @@ def validate_definition(o):
         total += len(text) + len(context)
         if total > MAX_EXAMPLE_CHARS:
             raise ValueError('Tổng nội dung ví dụ vượt giới hạn.')
-        row = {'text': text, 'context': context, 'expected': expected}
+        row = {'text': text, 'context': context, 'expected': expected, 'annotation': validate_annotation(example.get('annotation'), text)}
         # Store resolves/validates provenance; preserve bounded references only.
         for key in ('source_sample_id', 'source_review_id'):
             if example.get(key) is not None:
@@ -435,6 +462,10 @@ def _evaluate(item, prepared):
     if not evidence:
         result['reasons'] = ['Câu chưa có cụm từ hoặc địa chỉ mà mục này đang tìm.']
         return result
+    caution, limited = _find_terms(text, folded, spans, config.get('cautions', []), 'context')
+    if caution: ambiguities.append('custom_caution')
+    if limited: ambiguities.append('match_limit')
+    evidence += caution
     ambiguities = list(dict.fromkeys(ambiguities + prepared['guards']))
     evidence += prepared['guard_evidence']
     result['evidence'] = _deduplicate(evidence)
